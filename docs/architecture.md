@@ -46,23 +46,29 @@ wp-content/fatal-error-handler.php (drop-in)
         │  requires class, returns FPAD_Fatal_Error_Handler
         ▼
 handle()
+ ├── bail early on WP_SANDBOX_SCRAPING (core's plugin/theme editor loopback check)
  ├── detect_error()            error_get_last(); only E_ERROR, E_PARSE, E_CORE_ERROR,
  │                             E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR qualify
  ├── maybe_deactivate_plugin() match error['file'] against WP_PLUGIN_DIR/<plugin dir>
+ │    ├── fpad_settings check: log_only mode or protected plugin → attribute only,
+ │    │                        status log_only / protected (no deactivation)
  │    └── deactivate_plugin()  deactivate_plugins(); error_log(); queue admin notice:
+ │         │                   (status unavailable if deactivate_plugins() can't load)
  │         └── fpad_deactivated_plugins  (admin-notice queue)
  ├── add_to_deactivation_log() ALWAYS — write the fatal to fpad_deactivation_log
- │                             (permanent, capped at 100); records the plugin if one
- │                             was attributed, else a "logged only" entry
+ │                             (permanent, capped at 100, identical repeats coalesced
+ │                             with a count); records the plugin + status if one was
+ │                             attributed, else an "unattributed" entry
  └── display_custom_error_page()  HTTP 500, inline-styled HTML page, exit
+                                  (skipped entirely if headers already sent)
 ```
 
 Key behaviors:
 
-- **Culprit identification is a file-path prefix match**, not stack-trace analysis (readme.txt's marketing copy says otherwise). The directory of each active plugin's basename is compared against the start of `error['file']`. First match wins; loop breaks.
+- **Culprit identification is a file-path prefix match**, not stack-trace analysis. The directory of each active plugin's basename is compared against the start of `error['file']` (paths normalized for Windows; single-file plugins matched exactly). First match wins; loop breaks.
 - Errors originating in **mu-plugins, themes, drop-ins, or core** match no active plugin: nothing is deactivated, but the fatal is still recorded in the log (as a "logged only" entry) and the custom error page still renders.
-- **Every detected fatal is recorded** in the `fpad_deactivation_log` option by `add_to_deactivation_log()`, called unconditionally from `handle()` after the deactivation attempt — so the admin-visible log (Tools → Fatal Plugin Log) captures every fatal regardless of `WP_DEBUG` and regardless of plugin attribution. Entries carry a `deactivated` flag. (The pre-existing `error_log()` in `deactivate_plugin()` still records the deactivation action to the server log when a plugin is matched.)
-- Error detail (message, file, line, deactivated plugin name) is shown on the public error page **only when `WP_DEBUG` is true** (see `display_custom_error_page()`); otherwise visitors get a generic message. `WP_DEBUG` controls front-end display only, not logging.
+- **Every detected fatal is recorded** in the `fpad_deactivation_log` option by `add_to_deactivation_log()`, called unconditionally from `handle()` after the deactivation attempt — so the admin-visible log (Tools → Fatal Plugin Log) captures every fatal regardless of `WP_DEBUG` and regardless of plugin attribution. Entries carry `deactivated` and `status` fields, plus (since 1.4.0) `count`/`first_time` for coalesced repeats and `request_uri`/`php_version`/`wp_version` context. (The pre-existing `error_log()` in `deactivate_plugin()` still records the deactivation action to the server log when a plugin is matched.)
+- Error detail (message, file, line, deactivated plugin name) is shown on the public error page **only when `WP_DEBUG` is on and `WP_DEBUG_DISPLAY` is not explicitly `false`** (since 1.2.1; see `display_custom_error_page()`); the `FPAD_SHOW_ERROR_DETAILS` constant overrides the gate in either direction. Otherwise visitors get a generic message. Display gating never affects logging.
 - `handle()` wraps everything in `try/catch (Throwable)` and stays silent on failure, so the handler itself can never produce a secondary crash.
 
 ### Shutdown-context constraints (critical)
@@ -85,7 +91,7 @@ The drop-in copy in `wp-content/` must always exist and point at a valid class f
 | Every `admin_init` | `FPAD_Plugin_Lifecycle::check_dropin()` | Self-heal: reinstall if the drop-in is missing or was overwritten by another plugin |
 | `upgrader_process_complete` (this plugin updated) | `FPAD_Utils::plugin_upgrade_hook()` | Remove + reinstall: a plugin update wipes the plugin directory, which would strand the drop-in's `require` of the class file |
 
-Ownership check: `FPAD_Dropin_Manager` identifies "our" drop-in by searching its contents for the string `FPAD_Fatal_Error_Handler`. A foreign `fatal-error-handler.php` (installed by another plugin) is **never removed or overwritten** — `remove_dropin()` leaves it alone and `is_dropin_installed()` returns false (which means `check_dropin()` will attempt an install but `install_dropin()` copies over it — see Known issues below).
+Ownership check: `FPAD_Dropin_Manager` identifies "our" drop-in by searching its contents for the string `FPAD_Fatal_Error_Handler`. A foreign `fatal-error-handler.php` (installed by another plugin) is **never removed** — `remove_dropin()` leaves it alone. `is_dropin_installed()` returns false for a foreign drop-in, so `check_dropin()` will attempt an install and `install_dropin()` copies over it: while this plugin is active it deliberately claims the drop-in slot (only one can exist), but on deactivation/uninstall it deletes only its own (see the resolved notes at the end of this document).
 
 ## Class responsibilities
 
@@ -93,7 +99,7 @@ Ownership check: `FPAD_Dropin_Manager` identifies "our" drop-in by searching its
 |-------|---------|----------------|
 | `FPAD_Fatal_Error_Handler` | Shutdown (via drop-in) | Detect fatal, attribute to plugin, deactivate, log, render error page |
 | `FPAD_Dropin_Manager` | Normal | Copy/remove/verify `wp-content/fatal-error-handler.php`; WP_Filesystem init |
-| `FPAD_Admin` | Admin | Error notices, Tools → Fatal Plugin Log page, clear-log handling, "View Log" action link |
+| `FPAD_Admin` | Admin | Error notices + protection warning, Tools → Fatal Plugin Log page (Log + Settings tabs, protection banner, filters/search, per-entry delete, CSV/JSON export, copy-report), clear-log/settings/reinstall handling, Site Health test + debug info, "Settings"/"View Log" action links, notice suppression on the log screen |
 | `FPAD_Plugin_Lifecycle` | Normal | Activation/deactivation/uninstall hooks; `admin_init` drop-in health check |
 | `FPAD_Utils` | Normal | Load textdomain; refresh drop-in after self-update |
 
@@ -114,6 +120,6 @@ These are observations from reading the code — verify intent before changing:
 
 Resolved (kept here for history):
 
-- **`WP_DEBUG` controls front-end display only** — `display_custom_error_page()` gates error detail on `WP_DEBUG`. `handle()` calls `add_to_deactivation_log()` unconditionally, so every fatal is recorded in the admin-visible `fpad_deactivation_log` regardless of `WP_DEBUG` and regardless of whether a plugin could be attributed (unattributed fatals are stored as "logged only" entries). readme.txt was corrected from `WP_DEBUG_DISPLAY` to `WP_DEBUG`.
+- **Debug constants control front-end display only** — `display_custom_error_page()` gates error detail on `WP_DEBUG` + `WP_DEBUG_DISPLAY` (with the `FPAD_SHOW_ERROR_DETAILS` override, since 1.2.1). `handle()` calls `add_to_deactivation_log()` unconditionally, so every fatal is recorded in the admin-visible `fpad_deactivation_log` regardless of debug settings and regardless of whether a plugin could be attributed (unattributed fatals are stored with status `unattributed`, shown as "Logged only").
 - **Foreign drop-in overwrite** — by design, `install_dropin()` replaces any existing `fatal-error-handler.php` while this plugin is active (only one such drop-in can exist), and `remove_dropin()` removes only our own. The FAQ in readme.txt now describes this behavior accurately.
 - **`handle()` caught `Exception` only** — now catches `Throwable`, so a PHP 7 `Error` raised inside the handler no longer escapes.

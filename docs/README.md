@@ -15,11 +15,11 @@ When any active plugin causes a fatal PHP error, this plugin:
 
 1. Detects the error during PHP shutdown via a WordPress **drop-in** (`wp-content/fatal-error-handler.php`).
 2. Identifies the culprit by matching the error's file path against active plugin directories.
-3. Deactivates only that plugin.
+3. Deactivates only that plugin — unless log-only mode is on or the plugin is on the protected-plugins allowlist, in which case the fatal is only attributed and logged.
 4. Logs the incident (admin notice queue + permanent log, both in `wp_options`).
 5. Renders a custom error page with a reload button instead of the white screen of death.
 
-It is zero-configuration: there are no settings, only a log viewer under **Tools → Fatal Plugin Log**.
+It works out of the box with no required configuration. Optional settings (since 1.3.0) live under **Tools → Fatal Plugin Log → Settings**: a log-only mode and a protected-plugins allowlist. The same screen hosts the log viewer (filters, search, per-entry delete, CSV/JSON export since 1.4.0) and a protection-status banner.
 
 ## Quick facts
 

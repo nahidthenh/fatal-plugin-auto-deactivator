@@ -132,7 +132,7 @@ WordPress allows only one `fatal-error-handler.php` drop-in at a time. While thi
 
 = Why do I see detailed error information sometimes but not others? =
 
-For security reasons, detailed error information (file paths, line numbers, error messages) is only displayed on the front-end error page when WP_DEBUG is enabled in your WordPress configuration. When disabled, visitors see a generic error message while administrators still receive detailed notifications in the dashboard. Every fatal error is always recorded in the Fatal Plugin Log (Tools &rarr; Fatal Plugin Log) regardless of the WP_DEBUG setting.
+For security reasons, detailed error information (file paths, line numbers, error messages) is only displayed on the front-end error page when WP_DEBUG is enabled and on-screen display is not turned off via WP_DEBUG_DISPLAY. (You can force details on or off with the FPAD_SHOW_ERROR_DETAILS constant.) Otherwise, visitors see a generic error message while administrators still receive detailed notifications in the dashboard. Every fatal error is always recorded in the Fatal Plugin Log (Tools &rarr; Fatal Plugin Log) regardless of the WP_DEBUG setting.
 
 = Where are the error logs stored? =
 

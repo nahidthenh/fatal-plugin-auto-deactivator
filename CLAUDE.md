@@ -16,7 +16,7 @@ The whole plugin revolves around WordPress's **drop-in** system. On activation, 
 Flow on a fatal error:
 1. WP core shutdown handler loads `wp-content/fatal-error-handler.php` (the drop-in).
 2. Drop-in defines `FPAD_PLUGIN_DIR` relative to its own location, requires `includes/class-fatal-error-handler.php` from this plugin, defines `QM_DISABLE_ERROR_HANDLER` (Query Monitor conflict), and returns `new FPAD_Fatal_Error_Handler()`.
-3. `FPAD_Fatal_Error_Handler::handle()` reads `error_get_last()`, matches the error file path against each active plugin's directory (prefix match — not stack trace analysis, despite what readme.txt says), calls `deactivate_plugins()` if matched, **always** records the incident in `fpad_deactivation_log` (even when no plugin matched), renders an inline HTML 500 page, and exits.
+3. `FPAD_Fatal_Error_Handler::handle()` reads `error_get_last()`, matches the error file path against each active plugin's directory (prefix match on the error file path — not stack trace analysis), calls `deactivate_plugins()` if matched, **always** records the incident in `fpad_deactivation_log` (even when no plugin matched), renders an inline HTML 500 page, and exits.
 
 **Critical constraint**: `FPAD_Fatal_Error_Handler` and the drop-in run in a context where WordPress may be only partially loaded. Every WP function call in that class must be guarded with `function_exists()` / file includes, as the existing code does. Never add unguarded WP API calls, hooks, or plugin-loaded assumptions to `class-fatal-error-handler.php` or the drop-in.
 

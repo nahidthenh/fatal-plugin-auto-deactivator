@@ -12,7 +12,7 @@ Requirements for the environment:
 
 - WordPress ≥ 5.3 (drop-in support requires ≥ 5.2), PHP ≥ 7.0 — keep code compatible with PHP 7.0 (no typed properties, no arrow functions, no null coalescing assignment).
 - `wp-content/` must be writable (the drop-in is copied there).
-- For meaningful manual testing, set `define( 'WP_DEBUG', true );` in `wp-config.php` so the error page shows details.
+- For meaningful manual testing, set `define( 'WP_DEBUG', true );` in `wp-config.php` so the error page shows details. Note the detail gate (since 1.2.1): detail shows only when `WP_DEBUG` is on **and** `WP_DEBUG_DISPLAY` is not explicitly `false`; `define( 'FPAD_SHOW_ERROR_DETAILS', true );` forces it on regardless.
 
 ### Optional dev tooling
 
@@ -80,7 +80,12 @@ Activate it, then load any front-end page. Expected results:
 - **Drop-in self-heal**: delete `wp-content/fatal-error-handler.php`, load any wp-admin page — it should reappear (`admin_init` check).
 - **Deactivation cleanup**: deactivate the plugin — the drop-in must be removed; a *foreign* `fatal-error-handler.php` (without the `FPAD_Fatal_Error_Handler` string) must be left untouched.
 - **Parse errors**: a syntax error in the test plugin (caught at include time) should also be attributed and deactivated.
-- **Non-plugin fatals**: a fatal in a theme should render the error page but deactivate nothing.
+- **Non-plugin fatals**: a fatal in a theme should render the error page but deactivate nothing (logged with status "Logged only").
+- **Log-only mode** (since 1.3.0): enable it under Tools → Fatal Plugin Log → Settings, trigger the crash plugin — it must stay active, the entry gets a "Log only" badge, and the error page says deactivation is turned off.
+- **Protected plugins** (since 1.3.0): add the crash plugin to the allowlist — it must stay active, with a "Protected" badge and matching error-page copy.
+- **Protection status surfaces** (since 1.3.0): with the drop-in deleted or replaced by a foreign file, the site-wide admin notice, log-page banner, and Site Health test must all report it, and "Reinstall protection" must restore ours (without ever deleting a foreign drop-in).
+- **Log coalescing** (since 1.4.0): trigger the same fatal repeatedly — one row with an `×N` count and first/last-seen times, not N rows.
+- **Filters & export** (since 1.4.0): source/status filters and search narrow the table; CSV/JSON export downloads the full log; per-entry Delete removes one row (nonce-protected).
 - **Log cap**: the permanent log keeps only the 100 newest entries.
 - **Clear Log**: the button on the log page requires the nonce and `manage_options`.
 

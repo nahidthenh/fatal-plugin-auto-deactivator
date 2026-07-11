@@ -23,7 +23,7 @@ Honored external constants: `WP_DEBUG` + `WP_DEBUG_DISPLAY` (together gate error
 
 ## Database structure
 
-No custom tables. Two rows in `wp_options`:
+No custom tables. Three rows in `wp_options`:
 
 ### `fpad_deactivated_plugins` — admin-notice queue (transient by convention)
 
@@ -157,7 +157,7 @@ Instantiated by the drop-in; all WP calls guarded for partial-load context.
 | `remove_dropin()` | Deletes the drop-in only if owned (`dropin_is_ours()`) |
 | `is_dropin_installed()` | File exists **and** owned |
 | `get_status()` | Returns `active` / `foreign` / `missing` / `unwritable` / `no_filesystem` for admin surfacing |
-| `dropin_is_ours()` / `read_dropin()` | protected | Guarded read + ownership check against `OWNERSHIP_MARKER` |
+| `dropin_is_ours()` / `read_dropin()` | (protected) Guarded read + ownership check against `OWNERSHIP_MARKER` |
 | `create_dropin_source()` | Recovery: regenerates a drop-in source matching the committed one (relative path + `QM_DISABLE_ERROR_HANDLER`) |
 
 ### `FPAD_Admin` (`includes/class-admin.php`)
