@@ -2,7 +2,7 @@
 Contributors: rudlinkon
 Tags: fatal error, plugin deactivation, error handling, site protection, crash prevention
 Requires at least: 5.3
-Tested up to: 6.8
+Tested up to: 7.0
 Stable tag: 1.4.0
 Requires PHP: 7.0
 License: GPLv2 or later
@@ -156,7 +156,7 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 - Improved: Stored error messages are bounded in length to keep the log option small
 - Changed: The Fatal Plugin Log screen now hides admin notices from other plugins and WordPress core so it stays focused (the plugin's own protection status and action messages still appear)
 
-= 1.3.0 - 20/06/2026 =
+= 1.3.0 - 24/06/2026 =
 - Added: Protected plugins allowlist — choose plugins that must never be deactivated automatically, even if they cause a fatal error (the error is still logged and reported honestly)
 - Added: Log-only mode — detect and log fatal errors without ever deactivating a plugin
 - Added: Settings tab on the Fatal Plugin Log page for the allowlist and log-only mode
