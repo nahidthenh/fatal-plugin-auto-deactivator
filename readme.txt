@@ -147,7 +147,7 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 
 == Changelog ==
 
-= 1.4.0 - 20/06/2026 =
+= 1.4.0 - 23/07/2026 =
 - Added: Filter the Fatal Plugin Log by source and status, and search across plugin name, error message, and file path
 - Added: Delete individual log entries (in addition to clearing the whole log)
 - Added: Export the log to CSV or JSON, and a per-row "Copy" button that produces a ready-to-paste bug report
