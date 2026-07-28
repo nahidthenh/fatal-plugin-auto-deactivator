@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Fatal Plugin Auto Deactivator** (slug: `fatal-plugin-auto-deactivator`) is a WordPress.org-distributed plugin that automatically deactivates any plugin causing a fatal PHP error, logs the incident, and shows a custom error page instead of the white screen of death. Plain PHP — no build step, no test suite, no node/npm. Detailed docs live in `docs/`.
+**Fatal Plugin Auto Deactivator** (slug: `fatal-plugin-auto-deactivator`) is a WordPress.org-distributed plugin that automatically deactivates any plugin causing a fatal PHP error, logs the incident, and shows a custom error page instead of the white screen of death. Plain PHP — no build step, no test suite, no node/npm. No REST endpoints, no AJAX, no cron, no public hooks.
+
+Detailed docs live in `docs/` (excluded from distribution; keep them updated when behavior changes):
+- `docs/feature-map.md` — **feature → file/function lookup, sync pairs, playbooks for common changes; start here when locating or changing a feature**
+- `docs/architecture.md` — entry points, drop-in mechanism, error flow, execution contexts
+- `docs/reference.md` — option schemas, hook table, nonces/admin surfaces, per-class method reference
+- `docs/development.md` — setup, conventions, manual test scenarios
+- `docs/deployment.md` — release checklist and CI
 
 - Minimum: WordPress 5.3, PHP 7.0 (the drop-in mechanism requires WP ≥ 5.2; code must stay PHP 7.0 compatible).
 - Code follows WordPress Coding Standards (tabs, Yoda conditions, `esc_html`/`esc_url` escaping, nonces). `phpcs:ignore` annotations are used deliberately — keep them.

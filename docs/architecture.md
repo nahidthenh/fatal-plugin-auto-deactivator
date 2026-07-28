@@ -21,6 +21,51 @@ wp-content/
         └── class-utils.php                 ← textdomain, self-update drop-in refresh
 ```
 
+## Entry points and initialization
+
+### Normal request (plugin loaded by WordPress)
+
+`fatal-plugin-auto-deactivator.php` is the only file WordPress loads directly. It runs top-to-bottom at plugin load:
+
+1. Direct-access guard (`WPINC`), then constants: `FPAD_VERSION`, `FPAD_PLUGIN_BASENAME`, `FPAD_PLUGIN_DIR`, `FPAD_PLUGIN_URL`.
+2. `require_once` of the five class files in `includes/` (no autoloader).
+3. `FPAD_Utils::init()`, `FPAD_Admin::init()`, `FPAD_Plugin_Lifecycle::init()` — these only register hooks (see the [hook table in reference.md](reference.md#wordpress-hooks-used)); nothing executes until the hooks fire.
+4. `register_activation_hook` / `register_deactivation_hook` / `register_uninstall_hook` → `FPAD_Plugin_Lifecycle`.
+
+`FPAD_Dropin_Manager` and `FPAD_Fatal_Error_Handler` register nothing — they are instantiated on demand.
+
+### Fatal request (the crash path)
+
+No hooks involved: WP core's shutdown handler loads `wp-content/fatal-error-handler.php` (the drop-in), which requires `class-fatal-error-handler.php` and returns `new FPAD_Fatal_Error_Handler()`; core calls `handle()` on it. This works even when the plugin itself never loaded on that request.
+
+### All runtime entry points (exhaustive)
+
+| Entry point | Trigger | Handler |
+|-------------|---------|---------|
+| Plugin bootstrap | Every normal request | `fatal-plugin-auto-deactivator.php` |
+| Fatal error handling | WP core shutdown handler after a fatal | Drop-in → `FPAD_Fatal_Error_Handler::handle()` |
+| Log/Settings page render | `tools.php?page=fpad-log` (+ `&tab=settings`) | `FPAD_Admin::render_log_page()` |
+| Clear log / save settings | POST to that page (processed at the top of the render) | `FPAD_Admin::handle_clear_log()` / `handle_settings_save()` |
+| Reinstall protection / delete log entry | GET `?fpad_action=reinstall` / `?fpad_action=delete&key=…` on `admin_init`, then redirect | `FPAD_Admin::handle_admin_actions()` |
+| Log export | `admin-post.php?action=fpad_export_log&format=csv\|json` | `FPAD_Admin::export_log()` |
+| Activation / deactivation / uninstall | Plugin lifecycle | `FPAD_Plugin_Lifecycle::activate()` / `deactivate()` / `uninstall()` |
+| Drop-in self-heal | Every `admin_init` | `FPAD_Plugin_Lifecycle::check_dropin()` |
+| Self-update drop-in refresh | `upgrader_process_complete` | `FPAD_Utils::plugin_upgrade_hook()` |
+
+There are no REST routes, AJAX handlers, cron events, shortcodes, or blocks.
+
+## How the two halves communicate
+
+The shutdown handler and the normal plugin never call each other. They share exactly two things: the drop-in file (deployed by the manager, consumed by core) and three `wp_options` rows:
+
+| Option | Written by | Read by | Emptied/deleted by |
+|--------|-----------|---------|--------------------|
+| `fpad_deactivation_log` (permanent log) | `FPAD_Fatal_Error_Handler::add_to_deactivation_log()` — every fatal | `FPAD_Admin` log tab, export, Site Health debug info | Clear Log, per-entry delete, uninstall |
+| `fpad_deactivated_plugins` (notice queue) | `FPAD_Fatal_Error_Handler::store_deactivated_plugin_info()` — only on actual deactivation | `FPAD_Admin::display_admin_notices()` | Cleared immediately after notices display; uninstall |
+| `fpad_settings` (user settings) | `FPAD_Admin::handle_settings_save()` | `FPAD_Fatal_Error_Handler::get_settings()` (guarded) + `FPAD_Admin::get_settings()` | Uninstall |
+
+This one-way data flow (settings flow admin → handler; incidents flow handler → admin) is why the handler duplicates small helpers like `get_settings()` instead of reusing admin code: the shutdown context cannot depend on any other class being loadable. Full schemas: [reference.md](reference.md#database-structure).
+
 ## The drop-in mechanism
 
 WordPress (since 5.2) supports a `fatal-error-handler.php` **drop-in**: if that file exists in `wp-content/`, core's shutdown handler (registered very early in `wp-includes/load.php`, before plugins load) includes it and, if it returns an object with a `handle()` method, uses that object instead of the default `WP_Fatal_Error_Handler`. This is the most reliable hook point available — it fires even when a plugin fatals during its own loading.
@@ -31,7 +76,7 @@ The drop-in source (`includes/fatal-error-handler-dropin.php`) is deliberately t
 - Defines `QM_DISABLE_ERROR_HANDLER` to prevent Query Monitor's error handler from conflicting with ours.
 - Requires `includes/class-fatal-error-handler.php` from the plugin directory and returns `new FPAD_Fatal_Error_Handler()`.
 
-Note: `FPAD_Dropin_Manager::create_dropin_source()` can regenerate a fallback source file if the tracked one is missing. The generated fallback embeds an **absolute** plugin path, unlike the tracked source which computes it relatively. The tracked file is what normally ships; the generator is a recovery path only.
+Note: `FPAD_Dropin_Manager::create_dropin_source()` can regenerate the source file if the tracked one is missing. The generated content is kept functionally identical to the tracked source — paths derived relative to the drop-in's own location, `QM_DISABLE_ERROR_HANDLER` defined — only the header comment differs. The tracked file is what normally ships; the generator is a recovery path only. **When editing either, update the other** (see the sync-pairs table in [feature-map.md](feature-map.md#things-that-must-change-together-sync-pairs)).
 
 ## Fatal error flow
 

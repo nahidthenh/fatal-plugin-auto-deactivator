@@ -28,7 +28,7 @@ The plugin is distributed through the [WordPress.org plugin directory](https://w
 - **Trigger:** push of any tag.
 - **Action:** [`10up/action-wordpress-plugin-deploy@stable`](https://github.com/10up/action-wordpress-plugin-deploy) — commits the tagged tree to WP.org SVN `tags/<tag>` and `trunk`.
 - **Secrets required:** `SVN_USERNAME`, `SVN_PASSWORD` (WP.org credentials, configured in the GitHub repo).
-- **File filtering:** `.distignore` controls what is excluded from the SVN deploy (dotfiles, CI config, composer files, `vendor`, `tests`, `.wordpress-org`, archives, etc.). `.gitattributes` `export-ignore` entries mirror this for `git archive`-based packaging. Keep both in sync when adding tooling files.
+- **File filtering:** `.distignore` controls what is excluded from the SVN deploy (dotfiles, CI config, composer files, `vendor`, `tests`, `.wordpress-org`, archives — and `docs/`, `CLAUDE.md`, `.claude`: developer docs never ship to users). `.gitattributes` `export-ignore` entries mirror this for `git archive`-based packaging. Keep both in sync when adding tooling files. ⚠ Known drift: `.gitattributes` currently lacks entries for `docs/`, `CLAUDE.md`, `.claude`, and `vendor` — harmless for WP.org deploys (the 10up action prefers `.distignore` when present) but a manual `git archive` would include them.
 - **WP.org assets:** banners, icons, and screenshots live in `.wordpress-org/` and are deployed to the SVN `assets/` directory by the 10up actions.
 
 ### `assets.yml` — readme/assets-only update
@@ -40,7 +40,8 @@ The plugin is distributed through the [WordPress.org plugin directory](https://w
 ### `build-archive.yml` — manual zip build
 
 - **Trigger:** manual (`workflow_dispatch`) from the GitHub Actions tab.
-- **Action:** `rudlinkon/action-wordpress-build-zip@master` — produces an installable plugin zip as a workflow artifact (7-day retention). Useful for pre-release smoke testing or distributing a build outside WP.org.
+- **Action:** `rudlinkon/action-wordpress-build-zip@master` — produces an installable plugin zip as a workflow artifact (7-day retention), honoring `.distignore`. Useful for pre-release smoke testing or distributing a build outside WP.org.
+- **Caveat:** the workflow passes `npm-run-build: true` (Node 14), but this repo has no `package.json` — there is nothing to build. If a dispatch fails on the npm step, that flag is why; it can be set to `false`.
 
 ## Update-survival of the drop-in
 

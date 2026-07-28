@@ -49,9 +49,19 @@ The codebase follows **WordPress Coding Standards** (WPCS) conventions, although
 
 The single most important convention: **code reachable from the drop-in (`class-fatal-error-handler.php`) must guard every WordPress function call** with `function_exists()` and load core files manually when needed. WordPress may be partially loaded when the handler runs. See [architecture.md](architecture.md#shutdown-context-constraints-critical).
 
+### Documentation
+
+Developer docs live in `docs/` and the agent guide in `CLAUDE.md`; both are excluded from distribution via `.distignore`, so they never reach WP.org users — write freely. When a change alters behavior, update in the same commit: the relevant `docs/` page(s), `readme.txt` (description/FAQ/changelog — this one *is* user-facing), and `CLAUDE.md` if architecture-level facts changed. [feature-map.md](feature-map.md) lists per-feature touch points.
+
 ## Testing
 
-There is no automated test suite. Testing is manual against a live WordPress install:
+There is no automated test suite. Testing is manual against a live WordPress install.
+
+Cheapest first check — syntax-lint every PHP file (must stay valid on PHP 7.0; ideally lint with a 7.x binary if available):
+
+```bash
+find . -name '*.php' -not -path './vendor/*' -exec php -l {} \;
+```
 
 ### Triggering a fatal error safely
 

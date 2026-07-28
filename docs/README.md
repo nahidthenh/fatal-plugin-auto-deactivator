@@ -1,13 +1,26 @@
 # Fatal Plugin Auto Deactivator — Developer Documentation
 
-Technical documentation for developing and maintaining the Fatal Plugin Auto Deactivator WordPress plugin.
+Technical documentation for developing and maintaining the Fatal Plugin Auto Deactivator WordPress plugin. Written to be equally navigable by humans and AI coding agents.
 
 | Document | Contents |
 |----------|----------|
-| [architecture.md](architecture.md) | The drop-in mechanism, error-handling flow, class responsibilities, execution contexts |
-| [development.md](development.md) | Local setup, development workflow, coding standards, manual testing |
-| [reference.md](reference.md) | Database/options structure, hooks used, admin pages, constants, class/method reference |
-| [deployment.md](deployment.md) | Release process, version bumping, CI/CD workflows, WordPress.org SVN deployment |
+| [architecture.md](architecture.md) | Entry points and init flow, the drop-in mechanism, error-handling flow, how the two halves communicate, class responsibilities, execution contexts |
+| [feature-map.md](feature-map.md) | **Feature → file/function lookup**, sync pairs (things that must change together), playbooks for common changes |
+| [reference.md](reference.md) | Options/data schemas, every hook used, admin pages and nonces, constants, per-class method reference |
+| [development.md](development.md) | Local setup, branching, coding standards, the shutdown-context rule, manual test scenarios |
+| [deployment.md](deployment.md) | Release checklist, version bumping, CI workflows, WordPress.org SVN deployment, rollback |
+
+## Route by task
+
+| You want to… | Start at |
+|--------------|----------|
+| Understand how fatal handling works end to end | [architecture.md](architecture.md) |
+| Find which file/function implements a feature | [feature-map.md](feature-map.md#feature--implementation-lookup) |
+| Change or add a feature safely (touch points, mirrors) | [feature-map.md](feature-map.md#playbooks-for-common-changes) → check [sync pairs](feature-map.md#things-that-must-change-together-sync-pairs) |
+| Look up an option schema, hook, nonce, or method | [reference.md](reference.md) |
+| Modify anything reachable from the drop-in | [architecture.md → shutdown constraints](architecture.md#shutdown-context-constraints-critical) first — non-negotiable |
+| Set up locally / test a change manually | [development.md](development.md) |
+| Cut a release | [deployment.md](deployment.md) |
 
 ## What the plugin does
 
@@ -24,8 +37,9 @@ It works out of the box with no required configuration. Optional settings (since
 ## Quick facts
 
 - **Slug / text domain:** `fatal-plugin-auto-deactivator`
-- **Distribution:** [WordPress.org plugin directory](https://wordpress.org/plugins/fatal-plugin-auto-deactivator/)
-- **Requirements:** WordPress ≥ 5.3, PHP ≥ 7.0
+- **Distribution:** [WordPress.org plugin directory](https://wordpress.org/plugins/fatal-plugin-auto-deactivator/) (this `docs/` directory is excluded from the shipped plugin)
+- **Requirements:** WordPress ≥ 5.3, PHP ≥ 7.0 — all code must stay PHP 7.0 compatible
 - **License:** GPL-2.0+
-- **Stack:** plain PHP, no build step, no runtime dependencies, no custom DB tables
+- **Stack:** plain PHP, no build step, no runtime dependencies, no custom DB tables, no test suite (manual testing — see development.md)
+- **Surface:** no REST endpoints, no AJAX, no cron, no public hooks for third parties
 - **Branches:** `dev` (development) → `master` (release); releases deploy to WP.org SVN on tag push

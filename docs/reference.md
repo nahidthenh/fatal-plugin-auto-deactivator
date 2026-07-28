@@ -70,6 +70,8 @@ Since 1.4.0, identical repeated fatals are **coalesced**: `add_to_deactivation_l
 
 For fatals that cannot be attributed to an active plugin (theme/core/mu-plugin), `plugin`/`plugin_name` are empty and `deactivated` is `false` — the admin log page renders these as "Not identified / Logged only". Entries written before the `deactivated`/`status` fields existed lack them; the log page infers `deactivated` from whether `plugin` is non-empty, and `status` from `deactivated`.
 
+⚠ Two distinct md5 identities exist for log entries: `FPAD_Fatal_Error_Handler::log_fingerprint()` (`type|file|line|msg|plugin|status`, no timestamps — coalescing at write time) and `FPAD_Admin::entry_key()` (`time|first_time|type|file|line|msg` — addressing a row for per-entry delete). They hash different fields for different purposes; don't reuse one where the other is meant.
+
 ### `fpad_settings` — user settings (since 1.3.0)
 
 ```php
@@ -162,7 +164,44 @@ Instantiated by the drop-in; all WP calls guarded for partial-load context.
 
 ### `FPAD_Admin` (`includes/class-admin.php`)
 
-Static. `init()` wires the admin hooks (notices, protection notice, menu, action links, admin_init actions, Site Health). `render_log_page()` renders the **Log** and **Settings** tabs and a protection-status banner; `handle_clear_log()`/`handle_settings_save()`/`handle_admin_actions()` process the nonce-protected forms/actions. `get_settings()` reads `fpad_settings`; `get_active_plugin_choices()` lists active plugins for the allowlist; `maybe_show_protection_notice()` warns site-wide; `site_health_test()`/`add_debug_information()` feed Site Health.
+All static. Public methods are hook callbacks; private methods are internal helpers.
+
+Hooked entry points:
+
+| Method | Hook | Behavior |
+|--------|------|----------|
+| `init()` | — (called from bootstrap) | Registers every hook below |
+| `handle_admin_actions()` | `admin_init` | Processes GET actions `fpad_action=reinstall` (nonce `fpad_reinstall`) and `fpad_action=delete&key=…` (nonce `fpad_delete_{key}`); redirects with a feedback query arg |
+| `display_admin_notices()` | `admin_notices` | Renders one error notice per queued entry in `fpad_deactivated_plugins`, then empties the queue (cap `activate_plugins`) |
+| `maybe_show_protection_notice()` | `admin_notices` | Site-wide warning + Reinstall button when `get_protection_state()` ≠ `active` |
+| `add_settings_page()` | `admin_menu` | Registers **Tools → Fatal Plugin Log** (`fpad-log`, cap `manage_options`) |
+| `add_plugin_action_links()` | `plugin_action_links_{basename}` | Prepends "Settings" and "View Log" links |
+| `render_log_page()` | (page callback) | Runs `handle_settings_save()` + `handle_clear_log()`, surfaces redirect feedback, renders banner + tabs |
+| `export_log()` | `admin_post_fpad_export_log` | Streams full log as CSV (`csv_safe()`-escaped) or JSON; cap + nonce `fpad_export_log`; `exit` |
+| `maybe_suppress_admin_notices()` | `current_screen` | On `tools_page_fpad-log` only: `remove_all_actions()` on the notice hooks |
+| `register_site_health_test()` / `site_health_test()` | `site_status_tests` | Direct test `fpad_protection`: `good` when active, else `critical` |
+| `add_debug_information()` | `debug_information` | `fpad` section: version, protection status, settings, log stats |
+
+Internal helpers (private):
+
+| Method | Behavior |
+|--------|----------|
+| `render_log_tab()` | Clear-Log form, export links, filter bar, summary, table — or empty-state notices |
+| `render_log_summary( $log )` | Summary cards; sums `count` per entry so coalesced repeats are counted as occurrences |
+| `render_log_table( $log )` | Two `<tr>` per incident (data row + message/meta row), inline CSS, per-row Copy/Delete actions, inline JS for clipboard |
+| `render_filter_bar( $source, $status, $query )` | GET form with `fpad_source`/`fpad_status`/`fpad_q` (read-only → deliberately no nonce) |
+| `filter_log( $log, $source, $status, $query )` | Applies source/status filters + case-insensitive substring search over plugin name/basename/message/file |
+| `render_settings_tab()` / `handle_settings_save()` | Log-only checkbox + protected-plugins checklist; save validates submissions against currently active plugins (nonce `fpad_save_settings`) |
+| `handle_clear_log()` | Resets `fpad_deactivation_log` to `array()` (nonce `fpad_clear_log`, field `fpad_nonce`) |
+| `get_settings()` | Reads `fpad_settings` with defaults — mirror of the handler's guarded version |
+| `get_active_plugin_choices()` | `active_plugins` → sorted `basename => display name` map |
+| `source_key( $file )` / `source_label()` / `source_labels()` / `classify_source()` | Re-classify a stored error path — mirror of `FPAD_Fatal_Error_Handler::detect_error_source()` |
+| `entry_status( $entry )` | Canonical status, inferring `deactivated`/`logged`/`unattributed` for pre-1.3.0 entries lacking `status` |
+| `status_badge( $status )` / `get_error_type_string( $type )` | Badge HTML / E_* constant → label |
+| `get_protection_state()` / `protection_message()` / `reinstall_url()` / `render_protection_banner()` | Drop-in status surfacing + nonce'd reinstall link |
+| `entry_key( $entry )` | md5 of `time|first_time|error_type|error_file|error_line|error_msg` — row identity for per-entry delete |
+| `csv_safe( $value )` | Prefixes `'` to leading `= + - @ \t \r` against spreadsheet formula injection |
+| `build_report( $entry )` | Plain-text bug report for the clipboard button (intentionally untranslated) |
 
 ### `FPAD_Plugin_Lifecycle` (`includes/class-plugin-lifecycle.php`)
 
