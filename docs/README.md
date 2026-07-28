@@ -9,6 +9,7 @@ Technical documentation for developing and maintaining the Fatal Plugin Auto Dea
 | [reference.md](reference.md) | Options/data schemas, every hook used, admin pages and nonces, constants, per-class method reference |
 | [development.md](development.md) | Local setup, branching, coding standards, the shutdown-context rule, manual test scenarios |
 | [deployment.md](deployment.md) | Release checklist, version bumping, CI workflows, WordPress.org SVN deployment, rollback |
+| [prd/](prd/README.md) | Product requirements documents for proposed features (researched, prioritized, implementation-ready) |
 
 ## Route by task
 
