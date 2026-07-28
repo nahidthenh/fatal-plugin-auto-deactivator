@@ -27,6 +27,8 @@ Branded Error Page, Multisite: independent
 
 Recommended build order: Alerts → Watchdog (1.5.0) → Branded Page + Observability (1.6.0) → Quarantine (1.7.0) → Multisite (2.0.0). Every PRD is also implementable standalone — each specifies its fallback when a dependency hasn't shipped.
 
+**The 1.5.0 (P1) work is broken down into an implementation task list: [todo-1.5.0.md](todo-1.5.0.md).**
+
 ## Market snapshot backing these choices
 
 - **Own baseline:** [90+ installs, 5★](https://wordpress.org/plugins/fatal-plugin-auto-deactivator/) — early; features below target the discovery levers (alerting keyword space, multisite, agency tooling).
