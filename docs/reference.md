@@ -72,30 +72,57 @@ For fatals that cannot be attributed to an active plugin (theme/core/mu-plugin),
 
 ⚠ Two distinct md5 identities exist for log entries: `FPAD_Fatal_Error_Handler::log_fingerprint()` (`type|file|line|msg|plugin|status`, no timestamps — coalescing at write time) and `FPAD_Admin::entry_key()` (`time|first_time|type|file|line|msg` — addressing a row for per-entry delete). They hash different fields for different purposes; don't reuse one where the other is meant.
 
-### `fpad_settings` — user settings (since 1.3.0)
+### `fpad_settings` — user settings (since 1.3.0; notification keys since 1.5.0)
 
 ```php
 array(
-    'log_only'          => false,                          // bool: detect & log, never deactivate
-    'protected_plugins' => array( 'woocommerce/woocommerce.php' ), // basenames never auto-deactivated
+    'log_only'              => false,                          // bool: detect & log, never deactivate
+    'protected_plugins'     => array( 'woocommerce/woocommerce.php' ), // basenames never auto-deactivated
+    'notify_email'          => false,                          // email alert channel enabled
+    'notify_email_to'       => '',                             // comma-separated recipients; '' ⇒ admin_email at send time
+    'notify_webhook'        => false,                          // webhook alert channel enabled
+    'notify_webhook_url'    => '',                             // https URL (http allowed for localhost only)
+    'notify_webhook_format' => 'json',                         // 'json' | 'slack'
+    'notify_statuses'       => array( 'deactivated', 'protected', 'log_only', 'unavailable', 'unattributed' ), // outcomes that alert; saved-empty = deliberate "notify about nothing"
+    'notify_cooldown'       => 900,                            // per-fingerprint alert cooldown, clamped 60–86400 s
 )
 ```
 
-Read in the shutdown handler via the guarded `FPAD_Fatal_Error_Handler::get_settings()` and in the admin via `FPAD_Admin::get_settings()`. Written by the Settings tab (`FPAD_Admin::handle_settings_save()`). A matched plugin that is in `protected_plugins`, or any match while `log_only` is on, is attributed and logged with `status` `protected`/`log_only` but **not** deactivated.
+Read in the shutdown handler via the guarded `FPAD_Fatal_Error_Handler::get_settings()` and in the admin via `FPAD_Admin::get_settings()` (public since 1.5.0 so `FPAD_Notifier` shares it — the two mirrors must keep identical defaults/normalization). Written by the Settings tab (`FPAD_Admin::handle_settings_save()`). A matched plugin that is in `protected_plugins`, or any match while `log_only` is on, is attributed and logged with `status` `protected`/`log_only` but **not** deactivated.
 
-All three options are deleted in `FPAD_Plugin_Lifecycle::uninstall()`.
+### `fpad_alert_state` — alert rate-limit state (since 1.5.0)
+
+`array( md5-fingerprint => array( 'email' => ts, 'webhook' => ts ) )` — **per channel**, because transports become available at different points of WordPress' boot: with a single shared timestamp, a direct webhook send would suppress the queued email for the same persistently-crashing incident forever. Written by `send_alerts()` (shutdown, attempt-first — the attempt stamps the cooldown even if the transport throws) and `FPAD_Notifier::process_queue()` (on queued-item delivery); fingerprints whose newest channel timestamp is older than 7 days are pruned on write; stored with `autoload=false`. The fingerprint is the same `log_fingerprint()` identity the log uses to coalesce repeats.
+
+### `fpad_alert_queue` — pending alerts (since 1.5.0)
+
+Alerts whose transport function (`wp_mail`/`wp_remote_post`) did not exist at shutdown (very early fatals). Entries: `array( 'channel' => 'email'|'webhook', 'payload' => string, 'subject' => string (email only), 'fingerprint' => string, 'time' => int )`. Cap 20, oldest dropped; duplicate fingerprint+channel not re-queued; `autoload=false`. Drained by `FPAD_Notifier::drain_queue()` on `init` (priority 20) and the hourly `fpad_notifier_drain` cron, under the `fpad_notifier_lock` transient. Supersession is judged against a **snapshot of the state as it was before the drain, per channel**: an item is skipped only when its *own* channel recorded a send newer than the item (a sibling channel's direct send, or an item delivered earlier in the same drain, never suppresses it). The final queue write **merges** in any entries appended by a concurrently crashing request during the drain. The drain cron is scheduled lazily on the settings save that enables a channel and self-healed from `activate()`/`check_dropin()` (settings survive deactivation; the cron does not).
+
+### `fpad_watchdog_state` — protection watchdog state (since 1.5.0)
+
+`array( 'status', 'since', 'last_alert', 'last_alert_status', 'last_recovery_alert', 'last_check', 'reclaim_attempts', 'last_reclaim', 'alerted_status' )` — read via `FPAD_Plugin_Lifecycle::get_watchdog_state()` with `isset()` defaults (no notices on partial/missing option); stored with `autoload=false`. `last_check` feeds the "Protection last verified" line and Site Health debug info. Two damping mechanisms survive recovery on purpose: the foreign-reclaim back-off decays 24 h after `last_reclaim`, and the lost-alert throttle (`last_alert` + `last_alert_status`) is not cleared when protection returns — combined with the once-per-24h `last_recovery_alert` gate, a flapping status (e.g. a competing plugin rewriting the drop-in hourly) produces at most one lost + one restored alert per day instead of hourly ping-pong.
+
+All six options are deleted in `FPAD_Plugin_Lifecycle::uninstall()`.
+
+## Hooks provided (for third parties)
+
+| Hook | Type | Purpose |
+|------|------|---------|
+| `fpad_watchdog_interval` | filter (since 1.5.0) | Recurrence of the protection-watchdog cron event. Must be a registered cron schedule name; unknown values fall back to `'hourly'`. Applied in `FPAD_Plugin_Lifecycle::schedule_watchdog()` — the plugin's first public filter |
 
 ## WordPress hooks used
-
-The plugin registers no custom actions/filters of its own (nothing for third parties to hook). Hooks it attaches to:
 
 | Hook | Callback | Purpose |
 |------|----------|---------|
 | `plugins_loaded` | `FPAD_Utils::load_textdomain` | i18n |
 | `upgrader_process_complete` | `FPAD_Utils::plugin_upgrade_hook` | Refresh drop-in after self-update |
+| `init` (prio 20) | `FPAD_Notifier::drain_queue` | Deliver alerts queued during early fatals (since 1.5.0) |
+| `fpad_notifier_drain` (cron, hourly) | `FPAD_Notifier::drain_queue` | Drain backstop for front-end-only traffic; scheduled lazily when a channel is enabled, unscheduled when both disabled (since 1.5.0) |
+| `fpad_watchdog_check` (cron, hourly) | `FPAD_Plugin_Lifecycle::watchdog_check` | Verify/heal protection; scheduled on activation + self-scheduled from `check_dropin()` (since 1.5.0) |
 | `admin_init` | `FPAD_Plugin_Lifecycle::check_dropin` | Self-heal missing drop-in |
 | `admin_init` | `FPAD_Admin::handle_admin_actions` | Handle the nonce-protected "Reinstall protection" and per-entry "delete" actions |
 | `admin_post_fpad_export_log` | `FPAD_Admin::export_log` | Stream the log as a CSV or JSON download (nonce `fpad_export_log`) |
+| `admin_post_fpad_test_alert` | `FPAD_Admin::handle_test_alert` | Send a test notification through one channel (nonce `fpad_test_alert`, since 1.5.0) |
 | `current_screen` | `FPAD_Admin::maybe_suppress_admin_notices` | On the log screen only, `remove_all_actions()` on the notice hooks to hide other plugins'/core notices |
 | `admin_notices` | `FPAD_Admin::display_admin_notices` | Show + clear deactivation notices |
 | `admin_notices` | `FPAD_Admin::maybe_show_protection_notice` | Warn (site-wide) when protection is not active |
@@ -116,7 +143,8 @@ The error handler itself is **not** hook-based — it is invoked by WP core's sh
 | Error notices | All wp-admin pages (`admin_notices`) | `activate_plugins` | One dismissible error notice per queued deactivation; queue cleared after display |
 | Protection warning | All wp-admin pages (`admin_notices`) | `manage_options` | Shown when `FPAD_Dropin_Manager::get_status()` is not `active`; includes a nonce'd "Reinstall protection" button |
 | Log page | **Tools → Fatal Plugin Log** (`tools.php?page=fpad-log`), **Log** tab | `manage_options` | Status banner + incident table (date/time + `×N`, source, plugin, status badge, file:line, message, request/PHP/WP meta, Actions) + Clear Log button |
-| Settings tab | `tools.php?page=fpad-log&tab=settings` | `manage_options` | Log-only toggle + protected-plugins checklist; saved to `fpad_settings` |
+| Settings tab | `tools.php?page=fpad-log&tab=settings` | `manage_options` | Log-only toggle + protected-plugins checklist + Notifications section (email/webhook channels, statuses, cooldown); saved to `fpad_settings` |
+| Test notification | `admin-post.php?action=fpad_test_alert&channel=email\|webhook` | `manage_options` + nonce `fpad_test_alert` | Blocking test send; outcome (incl. HTTP code on webhook failure) surfaced via redirect + `settings_errors` |
 | Filter bar | GET on the Log tab (`fpad_source`, `fpad_status`, `fpad_q`) | `manage_options` | Read-only filtering/search; no nonce (no state change) |
 | Clear Log form | POST to the log page | `manage_options` + nonce `fpad_clear_log` (field `fpad_nonce`) | Resets `fpad_deactivation_log` to `array()` |
 | Save Settings form | POST to the settings tab | `manage_options` + nonce `fpad_save_settings` (field `fpad_settings_nonce`) | Writes `fpad_settings` |
@@ -148,7 +176,14 @@ Instantiated by the drop-in; all WP calls guarded for partial-load context.
 | `build_plugin_result( $plugin_base, $error, $deactivated, $status )` | protected | Builds the outcome array (`plugin_base`, `plugin_name`, `plugin_version`, `error`, `deactivated`, `status`) |
 | `store_deactivated_plugin_info( $plugin_base, $error )` | protected | Appends to the `fpad_deactivated_plugins` admin-notice queue |
 | `add_to_deactivation_log( $error, $plugin_result = null )` | protected | Prepends an entry to `fpad_deactivation_log` (caps at 100) for every fatal; records plugin info + `deactivated`/`status`. Guards `get_option`/`update_option` for shutdown context |
-| `display_custom_error_page( $error, $plugin_result )` | protected | Returns if `headers_sent()`; otherwise sends HTTP 500 and prints a self-contained HTML page (detail gated on `WP_DEBUG`+`WP_DEBUG_DISPLAY`/`FPAD_SHOW_ERROR_DETAILS`; source/status-aware copy), `exit` |
+| `display_custom_error_page( $error, $plugin_result )` | protected | Returns `false` if `headers_sent()`; otherwise sends HTTP 500, prints a self-contained HTML page (detail gated on `WP_DEBUG`+`WP_DEBUG_DISPLAY`/`FPAD_SHOW_ERROR_DETAILS`; source/status-aware copy), **flushes all output buffers to the client, and returns `true` — the `exit` happens in `handle()` after the alert sends** (since 1.5.0) |
+| `maybe_notify( $error, $plugin_result )` | protected | (1.5.0) Thin Throwable-guard wrapper around `send_alerts()`, called AFTER the page is rendered+flushed so transports can never delay the visitor and an alert failure cannot skip `handle()`'s exit |
+| `send_alerts( $error, $plugin_result )` | protected | (1.5.0) Channel/status gates → **per-channel** fingerprint cooldown (`fpad_alert_state`) → direct guarded send (each transport in its own try/catch, attempt-first stamping) or queue fallback. Untranslated strings |
+| `webhook_request_args( $url, $body )` | protected | (1.5.0) Hardened POST args: non-blocking, timeout 3, `redirection 0`, `reject_unsafe_urls` for non-loopback hosts (sync pair with `FPAD_Notifier::webhook_args()`) |
+| `queue_alert( … )` | protected | (1.5.0) Append to `fpad_alert_queue` when a transport is unavailable (cap 20, fingerprint+channel dedupe) |
+| `build_alert_subject()` / `build_alert_email_body()` | protected | (1.5.0) Email content; body field order mirrors `FPAD_Admin::build_report()` (sync pair) + `Log:` link |
+| `build_webhook_json_payload()` / `build_webhook_slack_payload()` | protected | (1.5.0) FR-4 payloads; Slack severity 🟠 self-healed / 🔴 still broken |
+| `status_verb()` / `error_type_name()` / `alert_recipients()` / `alert_site_url()` | protected | (1.5.0) Alert helpers; `alert_site_url()` falls back to a sanitized `HTTP_HOST` when `home_url()` is unavailable |
 
 ### `FPAD_Dropin_Manager` (`includes/class-dropin-manager.php`)
 
@@ -159,6 +194,7 @@ Instantiated by the drop-in; all WP calls guarded for partial-load context.
 | `remove_dropin()` | Deletes the drop-in only if owned (`dropin_is_ours()`) |
 | `is_dropin_installed()` | File exists **and** owned |
 | `get_status()` | Returns `active` / `foreign` / `missing` / `unwritable` / `no_filesystem` for admin surfacing |
+| `verify_protection()` | (1.5.0) End-to-end check: `array( 'status', 'detail' )`. Adds `disabled` (`WP_DISABLE_FATAL_ERROR_HANDLER` truthy, checked first) and `stranded` (drop-in ours but its require target — computed relative to `WP_CONTENT_DIR`, the way the drop-in computes it, **not** via `FPAD_PLUGIN_DIR` — is not readable); legacy statuses pass through. All admin surfaces + the watchdog use this |
 | `dropin_is_ours()` / `read_dropin()` | (protected) Guarded read + ownership check against `OWNERSHIP_MARKER` |
 | `create_dropin_source()` | Recovery: regenerates a drop-in source matching the committed one (relative path + `QM_DISABLE_ERROR_HANDLER`) |
 
@@ -178,6 +214,7 @@ Hooked entry points:
 | `add_plugin_action_links()` | `plugin_action_links_{basename}` | Prepends "Settings" and "View Log" links |
 | `render_log_page()` | (page callback) | Runs `handle_settings_save()` + `handle_clear_log()`, surfaces redirect feedback, renders banner + tabs |
 | `export_log()` | `admin_post_fpad_export_log` | Streams full log as CSV (`csv_safe()`-escaped) or JSON; cap + nonce `fpad_export_log`; `exit` |
+| `handle_test_alert()` | `admin_post_fpad_test_alert` | (1.5.0) Cap + nonce, `FPAD_Notifier::send_test( $channel )`, redirect with `fpad_test`/`fpad_test_detail` query args |
 | `maybe_suppress_admin_notices()` | `current_screen` | On `tools_page_fpad-log` only: `remove_all_actions()` on the notice hooks |
 | `register_site_health_test()` / `site_health_test()` | `site_status_tests` | Direct test `fpad_protection`: `good` when active, else `critical` |
 | `add_debug_information()` | `debug_information` | `fpad` section: version, protection status, settings, log stats |
@@ -193,7 +230,8 @@ Internal helpers (private):
 | `filter_log( $log, $source, $status, $query )` | Applies source/status filters + case-insensitive substring search over plugin name/basename/message/file |
 | `render_settings_tab()` / `handle_settings_save()` | Log-only checkbox + protected-plugins checklist; save validates submissions against currently active plugins (nonce `fpad_save_settings`) |
 | `handle_clear_log()` | Resets `fpad_deactivation_log` to `array()` (nonce `fpad_clear_log`, field `fpad_nonce`) |
-| `get_settings()` | Reads `fpad_settings` with defaults — mirror of the handler's guarded version |
+| `get_settings()` | **Public since 1.5.0** (`FPAD_Notifier` reads through it). Reads `fpad_settings` with defaults incl. the notification keys — mirror of the handler's guarded version (sync pair) |
+| `last_watchdog_check()` | (1.5.0) Timestamp of the watchdog's last run from `fpad_watchdog_state`, 0 when never; feeds the banner line + debug info |
 | `get_active_plugin_choices()` | `active_plugins` → sorted `basename => display name` map |
 | `source_key( $file )` / `source_label()` / `source_labels()` / `classify_source()` | Re-classify a stored error path — mirror of `FPAD_Fatal_Error_Handler::detect_error_source()` |
 | `entry_status( $entry )` | Canonical status, inferring `deactivated`/`logged`/`unattributed` for pre-1.3.0 entries lacking `status` |
@@ -205,7 +243,32 @@ Internal helpers (private):
 
 ### `FPAD_Plugin_Lifecycle` (`includes/class-plugin-lifecycle.php`)
 
-Static. `activate()` / `deactivate()` / `uninstall()` delegate to `FPAD_Dropin_Manager`; `uninstall()` also deletes `fpad_deactivated_plugins`, `fpad_deactivation_log`, and `fpad_settings`. `check_dropin()` (on `admin_init`) reinstalls when `is_dropin_installed()` is false.
+Static. `activate()` installs the drop-in + schedules the watchdog; `deactivate()` removes the drop-in + clears both cron events; `uninstall()` additionally deletes all six `fpad_*` options. `check_dropin()` (on `admin_init`) reinstalls when `is_dropin_installed()` is false and self-schedules the watchdog (upgrade path).
+
+Watchdog methods (since 1.5.0):
+
+| Method | Behavior |
+|--------|----------|
+| `schedule_watchdog()` | protected; schedules `fpad_watchdog_check` if absent, interval via the `fpad_watchdog_interval` filter validated against `wp_get_schedules()` |
+| `watchdog_check()` | Cron callback: `verify_protection()` → heal `missing`/`foreign` (foreign reclaimed max once per 24 h) → re-verify → recovery handling or incident + alert (once per 24 h per distinct status). Persists `fpad_watchdog_state`; skips the write when only a <10-min-old heartbeat changed |
+| `get_watchdog_state()` | protected; normalized state read with per-field defaults |
+| `send_watchdog_alert( $event, $status, $detail )` | protected; delegates to `FPAD_Notifier::dispatch_event()` (severity good/bad + translated subject via `$data['subject']`); the notifier owns the no-channel `wp_mail` fallback and the log-page link |
+| `describe_status( $status )` | protected; alert-body wording — **mirrors the private `FPAD_Admin::protection_message()` (sync pair)** |
+
+### `FPAD_Notifier` (`includes/class-notifier.php`, since 1.5.0)
+
+Static; normal-request side of alerting (the shutdown handler sends directly when transports exist and queues otherwise).
+
+| Method | Visibility | Behavior |
+|--------|------------|----------|
+| `init()` | public | Hooks `drain_queue` to `init` (prio 20, after pluggables settle) and the `fpad_notifier_drain` cron |
+| `drain_queue()` | public | Bails on empty queue (before touching the lock — zero cost when idle); `fpad_notifier_lock` transient (60 s) against concurrent drains; Throwable-guarded |
+| `send_test( $channel )` | public | Blocking test send → `array( 'success', 'detail' )`; webhook detail carries `HTTP {code}` or the WP_Error message |
+| `dispatch_event( $event, $message, $data )` | public | Generic entry point for other components (watchdog events `fpad.protection_lost`/`_restored`). Sends through every enabled channel; `$data['severity']` `bad`/`good` picks 🔴/🟢 for Slack; `$data['subject']` overrides the email subject (stripped from webhook payloads); **falls back to `wp_mail( admin_email )` when no channel is configured**. Appends the log-page link to every body — callers must not add it themselves. Never throws |
+| `maybe_schedule_drain()` | public | Schedules the hourly drain cron when a usable channel is enabled and it isn't scheduled; called from settings save, `activate()`, and `check_dropin()` |
+| `process_queue( $queue )` | private | Per-item: skip only when the item's own channel has a state send newer than the item (snapshot-based, per-channel supersession); send respecting current channel config (disabled channel ⇒ item dropped); failed transport ⇒ item retained for the cron backstop; merge-on-write preserves concurrently queued entries; updates + prunes `fpad_alert_state` |
+| `webhook_args( $url, $body, $blocking, $timeout )` | private | Hardened POST args (no redirects; `reject_unsafe_urls` except loopback) — sync pair with the handler's `webhook_request_args()` |
+| `recipients()` / `event_label()` / `queue_item_key()` | private | Recipient resolution (configured list or `admin_email`); event-name → fallback subject label; queue-entry identity for merge-on-write |
 
 ### `FPAD_Utils` (`includes/class-utils.php`)
 

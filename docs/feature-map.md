@@ -9,9 +9,10 @@ The codebase is small and flat — one bootstrap file plus five classes in `incl
 | `fatal-plugin-auto-deactivator.php` | — (bootstrap) | Normal plugin load |
 | `includes/class-fatal-error-handler.php` | `FPAD_Fatal_Error_Handler` | **PHP shutdown after a fatal** (partial WP — guard everything) |
 | `includes/fatal-error-handler-dropin.php` | — (drop-in source, copied to `wp-content/fatal-error-handler.php`) | **PHP shutdown after a fatal** |
-| `includes/class-dropin-manager.php` | `FPAD_Dropin_Manager` | Normal (admin/lifecycle) |
+| `includes/class-dropin-manager.php` | `FPAD_Dropin_Manager` | Normal (admin/lifecycle/cron) |
 | `includes/class-admin.php` | `FPAD_Admin` | wp-admin only |
-| `includes/class-plugin-lifecycle.php` | `FPAD_Plugin_Lifecycle` | Activation/deactivation/uninstall + `admin_init` |
+| `includes/class-notifier.php` | `FPAD_Notifier` | Normal requests + cron (alert delivery, since 1.5.0) |
+| `includes/class-plugin-lifecycle.php` | `FPAD_Plugin_Lifecycle` | Activation/deactivation/uninstall + `admin_init` + watchdog cron |
 | `includes/class-utils.php` | `FPAD_Utils` | Normal plugin load |
 
 ## Feature → implementation lookup
@@ -33,6 +34,10 @@ All in `includes/class-fatal-error-handler.php` unless noted. Everything here mu
 | Repeat coalescing (×N counting) | `add_to_deactivation_log()`, `log_fingerprint()` | same | 1.4.0 |
 | Log context capture (request URI, PHP/WP version, message cap) | `add_to_deactivation_log()`, `current_request_uri()` | same | 1.4.0 |
 | Error-source classification (plugin/theme/mu-plugin/drop-in/core) | `detect_error_source()` — admin mirror: `FPAD_Admin::source_key()` | — | 1.2.0 |
+| Instant alerts: gates, cooldown, direct send | `maybe_notify()` (called between logging and the page) | `fpad_settings` (read), `fpad_alert_state` (write) | 1.5.0 |
+| Instant alerts: payload/content builders | `build_alert_subject()`, `build_alert_email_body()`, `build_webhook_json_payload()`, `build_webhook_slack_payload()`, `status_verb()`, `error_type_name()`, `alert_site_url()` | — | 1.5.0 |
+| Instant alerts: early-fatal queue fallback | `queue_alert()` — drained by `FPAD_Notifier` on normal requests | `fpad_alert_queue` (write) | 1.5.0 |
+| OOM survival (reserved memory buffer) | Drop-in reserves 256 KB in `$GLOBALS['fpad_reserved_memory']`; `handle()` frees it first | — | 1.5.0 |
 | Custom 500 error page (HTML + inline CSS) | `display_custom_error_page()` | — | 1.0.0 |
 | Error-detail gating on the public page | `display_custom_error_page()` (checks `WP_DEBUG`, `WP_DEBUG_DISPLAY`, `FPAD_SHOW_ERROR_DETAILS`) | — | 1.2.1 |
 | Handler self-protection (never crash the crash handler) | `handle()` `try/catch (Throwable)`; `headers_sent()` guard in `display_custom_error_page()` | — | 1.2.0 |
@@ -45,6 +50,10 @@ All in `includes/class-fatal-error-handler.php` unless noted. Everything here mu
 | Install the drop-in (copy source → `wp-content/`) | `FPAD_Dropin_Manager::install_dropin()` | `class-dropin-manager.php` | 1.0.0 |
 | Remove only *our* drop-in (never foreign) | `FPAD_Dropin_Manager::remove_dropin()`, `dropin_is_ours()`, `OWNERSHIP_MARKER` | `class-dropin-manager.php` | 1.0.0 |
 | Protection-status reporting | `FPAD_Dropin_Manager::get_status()` → `active`/`foreign`/`missing`/`unwritable`/`no_filesystem` | `class-dropin-manager.php` | 1.3.0 |
+| End-to-end protection verification (+`disabled`, `stranded`) | `FPAD_Dropin_Manager::verify_protection()` | `class-dropin-manager.php` | 1.5.0 |
+| Protection watchdog (hourly verify, heal, alert) | `FPAD_Plugin_Lifecycle::watchdog_check()`, `schedule_watchdog()`, `get_watchdog_state()` on cron `fpad_watchdog_check`; interval filter `fpad_watchdog_interval` | `class-plugin-lifecycle.php` | 1.5.0 |
+| Watchdog alerting (lost/restored events) | `FPAD_Plugin_Lifecycle::send_watchdog_alert()`, `describe_status()` → `FPAD_Notifier::dispatch_event()` or `wp_mail` fallback | `class-plugin-lifecycle.php`, `class-notifier.php` | 1.5.0 |
+| Alert queue drain + test sends + generic events | `FPAD_Notifier::drain_queue()`, `send_test()`, `dispatch_event()` | `class-notifier.php` | 1.5.0 |
 | Drop-in source regeneration fallback | `FPAD_Dropin_Manager::create_dropin_source()` — **must stay in sync with the tracked source file** | `class-dropin-manager.php` | 1.0.0 |
 | Install on activation / remove on deactivation & uninstall | `FPAD_Plugin_Lifecycle::activate()` / `deactivate()` / `uninstall()` | `class-plugin-lifecycle.php` | 1.0.0 |
 | Self-heal missing/overwritten drop-in | `FPAD_Plugin_Lifecycle::check_dropin()` on `admin_init` | `class-plugin-lifecycle.php` | 1.0.0 |
@@ -71,6 +80,9 @@ The screen is **Tools → Fatal Plugin Log** (`tools.php?page=fpad-log`), regist
 | CSV/JSON export | `export_log()` (`admin_post_fpad_export_log`), `csv_safe()` | 1.4.0 |
 | Copy-to-clipboard bug report | `build_report()` + inline vanilla JS emitted by `render_log_table()` | 1.4.0 |
 | Settings tab: log-only mode + protected plugins | `render_settings_tab()`, `handle_settings_save()`, `get_settings()`, `get_active_plugin_choices()` | 1.3.0 |
+| Settings tab: Notifications section (channels, statuses, cooldown) + lazy drain-cron scheduling | `render_settings_tab()`, `handle_settings_save()` | 1.5.0 |
+| Test notification buttons | `handle_test_alert()` (`admin_post_fpad_test_alert`) → `FPAD_Notifier::send_test()`; feedback via `fpad_test` query args in `render_log_page()` | 1.5.0 |
+| "Protection last verified" heartbeat line + debug-info row | `last_watchdog_check()`, `render_protection_banner()`, `add_debug_information()` | 1.5.0 |
 | Suppress other plugins' notices on the log screen | `maybe_suppress_admin_notices()` on `current_screen` | 1.4.0 |
 | Site Health: protection test | `register_site_health_test()`, `site_health_test()` | 1.3.0 |
 | Site Health: debug info section | `add_debug_information()` | 1.3.0 |
@@ -86,7 +98,7 @@ The screen is **Tools → Fatal Plugin Log** (`tools.php?page=fpad-log`), regist
 | CI: release deploy / zip build / (dormant) asset sync | `.github/workflows/release.yml`, `build-archive.yml`, `assets.yml` | See [deployment.md](deployment.md) |
 | Distribution exclusions | `.distignore` (authoritative), `.gitattributes` (partial mirror) | `docs/`, `CLAUDE.md`, `.claude` never ship |
 
-There are **no REST endpoints, no AJAX handlers, no cron events, no shortcodes, no blocks, and no public hooks for third parties**. The only HTTP entry points beyond normal page loads are the admin-page GET/POST actions and `admin-post.php?action=fpad_export_log` listed above.
+There are **no REST endpoints, no AJAX handlers, no shortcodes, and no blocks**. Since 1.5.0 there are two cron events (`fpad_watchdog_check`, hourly; `fpad_notifier_drain`, hourly + lazily scheduled) and one public filter (`fpad_watchdog_interval`). The only HTTP entry points beyond normal page loads are the admin-page GET/POST actions and the two `admin-post.php` actions (`fpad_export_log`, `fpad_test_alert`) listed above.
 
 ## Things that must change together (sync pairs)
 
@@ -97,7 +109,10 @@ The classic trap in this codebase is editing one side of a mirrored pair. Check 
 | `includes/fatal-error-handler-dropin.php` (tracked drop-in source) | The heredoc in `FPAD_Dropin_Manager::create_dropin_source()` | The generator is a recovery path that must produce an equivalent drop-in (relative paths + `QM_DISABLE_ERROR_HANDLER`) |
 | Anything about the drop-in's contents | Keep the literal string `FPAD_Fatal_Error_Handler` in it | It is `FPAD_Dropin_Manager::OWNERSHIP_MARKER` — without it, the plugin no longer recognizes (or removes) its own drop-in |
 | `FPAD_Fatal_Error_Handler::detect_error_source()` | `FPAD_Admin::source_key()` | Deliberate mirror: the error page and the log viewer must label sources identically (the admin copy re-classifies stored paths so old entries stay consistent) |
-| `FPAD_Fatal_Error_Handler::get_settings()` | `FPAD_Admin::get_settings()` | Same defaults/validation, duplicated because the handler cannot depend on the admin class |
+| `FPAD_Fatal_Error_Handler::get_settings()` | `FPAD_Admin::get_settings()` | Same defaults/validation (incl. all `notify_*` keys since 1.5.0), duplicated because the handler cannot depend on the admin class. `FPAD_Notifier` deliberately reads through the admin mirror so only two copies exist |
+| `FPAD_Fatal_Error_Handler::build_alert_email_body()` field order | `FPAD_Admin::build_report()` | The alert email mirrors the copy-to-clipboard bug report layout; the handler cannot call the admin class at shutdown |
+| `FPAD_Plugin_Lifecycle::describe_status()` wording | `FPAD_Admin::protection_message()` | Watchdog alert bodies and the admin banner must tell the same story; the admin method is private, so the wording is duplicated |
+| The `stranded` path in `FPAD_Dropin_Manager::verify_protection()` | `FPAD_PLUGIN_DIR` computation in the drop-in (and its generator) | Both derive the handler path relative to `WP_CONTENT_DIR`; on symlinked installs this deliberately differs from the main plugin's `FPAD_PLUGIN_DIR` constant |
 | The `status` vocabulary in `build_plugin_result()` / `add_to_deactivation_log()` | `FPAD_Admin::status_badge()`, `entry_status()`, and the statuses array in `render_filter_bar()` | New status values need a badge, filter option, and legacy-inference handling |
 | Error-type map in `FPAD_Admin::get_error_type_string()` | The `switch` in `display_custom_error_page()` and the allowlist in `detect_error()` | Three copies of the E_* vocabulary |
 | Log entry schema in `add_to_deactivation_log()` | `render_log_table()` (display), `export_log()` (CSV columns), `build_report()` (copy text), possibly `log_fingerprint()`/`entry_key()`, and the schema doc in [reference.md](reference.md) | Every consumer of `fpad_deactivation_log` |

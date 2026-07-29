@@ -181,3 +181,13 @@ Settings tab, new `<h2>Notifications</h2>` section under the existing table: ema
 
 1. Should the cooldown also collapse *different* fatals from the same plugin into one alert? (Proposed: no for v1 — fingerprint granularity matches the log.)
 2. Auto-enable email (to admin_email) by default for new installs? (Proposed: no — opt-in avoids surprise emails; revisit after feedback.)
+
+## 16. Implementation notes — as shipped in 1.5.0
+
+Adversarial review during implementation changed several FR details, all toward stronger guarantees; the code (and reference.md/architecture.md) is authoritative:
+
+- **Ordering (supersedes FR-2's "before display_custom_error_page")**: `maybe_notify()` runs *after* the error page is rendered and **flushed** (`display_custom_error_page()` no longer exits; `handle()` exits last). `wp_mail()` has no timeout control, so a broken SMTP stack could otherwise hang the crash page for minutes; with the page already delivered, a transport can only delay the process, never the visitor. This also preserves the page if a transport re-exhausts memory on OOM fatals.
+- **Rate-limit state (refines FR-2.3)**: `fpad_alert_state` is per fingerprint **and per channel** (`fp => array( 'email' => ts, 'webhook' => ts )`). Transports become available at different boot points; a single shared timestamp let a direct webhook send permanently suppress the queued email for the same persistently-crashing incident. The drain compares against a pre-drain snapshot, per channel, and merges concurrently queued entries on write.
+- **Guards (FR-2.6)**: internal Throwable wrapper plus per-transport try/catch with attempt-first cooldown stamping (a throwing SMTP/HTTP hook counts as an attempt and cannot suppress the page or the exit).
+- **Webhook hardening (extends §11)**: every send uses `redirection => 0` and request-time `reject_unsafe_urls`, except the documented loopback exception — which save-time validation now implements manually, because `wp_http_validate_url()` rejects loopback hosts outright.
+- New options are stored with `autoload=false`.

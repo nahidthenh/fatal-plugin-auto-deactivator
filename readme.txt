@@ -3,7 +3,7 @@ Contributors: rudlinkon
 Tags: fatal error, plugin deactivation, error handling, site protection, crash prevention
 Requires at least: 5.3
 Tested up to: 7.0
-Stable tag: 1.4.0
+Stable tag: 1.5.0
 Requires PHP: 7.0
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
@@ -21,7 +21,10 @@ The Fatal Plugin Auto Deactivator plugin is a powerful tool designed to enhance 
 * **Instant Deactivation**: Automatically deactivates the problematic plugin during the shutdown phase
 * **Protected Plugins Allowlist**: Mark critical plugins (for example a checkout or payments plugin) that must never be deactivated automatically — the fatal is still logged and reported honestly
 * **Log-Only Mode**: Optionally detect and log fatal errors without ever deactivating a plugin
-* **Protection-Status Visibility**: Admin warning, status banner, and a Site Health test that tell you when the protection drop-in is missing, replaced, or could not be installed — with one-click reinstall
+* **Instant Email & Webhook Alerts**: Get notified within seconds of a fatal error — by email and/or a webhook (generic JSON or Slack-compatible) — including which plugin was deactivated, or an urgent warning when a protected plugin is still crashing. Identical repeated errors are rate-limited so a looping fatal can't flood your inbox or channel
+* **Protection Watchdog**: An hourly background check verifies the protection drop-in end-to-end, silently reinstalls it if it went missing or was overwritten, detects when the plugin folder was moved or fatal error handling was disabled in wp-config.php, and alerts you when protection can't be restored automatically
+* **Out-of-Memory Resilience**: A small reserved memory buffer lets the plugin log and alert even when the fatal error is PHP running out of memory
+* **Protection-Status Visibility**: Admin warning, status banner with a "last verified" heartbeat, and a Site Health test that tell you when the protection drop-in is missing, replaced, or could not be installed — with one-click reinstall
 * **Source-Aware Messaging**: Detects whether a fatal error came from a plugin, theme, must-use plugin, drop-in, or WordPress core, and reports the source honestly — it never claims to have resolved an error it could not act on
 * **Detailed Admin Notifications**: Provides clear notifications about which plugin was deactivated and why
 * **Persistent Error Logging**: Records every detected fatal error in a permanent log for troubleshooting, even when no plugin could be attributed
@@ -84,7 +87,11 @@ The plugin catches fatal PHP errors, parse errors, and other critical errors tha
 
 = Will I be notified when a plugin is deactivated? =
 
-Yes, an admin notice will be displayed in your WordPress dashboard showing which plugin was deactivated and the specific error that caused it.
+Yes. An admin notice is displayed in your WordPress dashboard showing which plugin was deactivated and the specific error that caused it. Since 1.5.0 you can also enable instant notifications under Tools &rarr; Fatal Plugin Log &rarr; Settings: an email to one or more addresses and/or a webhook (generic JSON, or a Slack-compatible message you can point at a Slack/Discord/Mattermost incoming webhook). Alerts tell you what action was taken — a plugin that was automatically deactivated reads differently from a protected plugin that is still crashing and needs your attention. Identical repeated errors are rate-limited (configurable cooldown), and both channels have a "send test" button.
+
+= What exactly do alert emails and webhooks contain? =
+
+The same details as the log entry: plugin name, outcome status, error type/message, file and line, the request URL, and PHP/WordPress versions. That includes server file paths, so point alerts only at inboxes and endpoints you control. Webhook URLs must use https:// (plain http:// is allowed only for localhost). If a fatal happens so early that WordPress cannot send mail or HTTP requests yet, the alert is queued and delivered on the next normal page load.
 
 = Can I reactivate a deactivated plugin? =
 
@@ -100,7 +107,7 @@ Yes. Enable "Log-only mode" under Tools &rarr; Fatal Plugin Log &rarr; Settings.
 
 = How do I know the protection is actually working? =
 
-The Fatal Plugin Log page shows a status banner ("Protection active" or a warning), and if the protection drop-in is missing, was replaced by another plugin, or could not be installed (for example because wp-content is not writable), you'll see an admin notice and a Site Health test telling you, with a one-click "Reinstall protection" button.
+The Fatal Plugin Log page shows a status banner ("Protection active" or a warning) with a "Protection last verified" heartbeat, and if the protection drop-in is missing, was replaced by another plugin, or could not be installed (for example because wp-content is not writable), you'll see an admin notice and a Site Health test telling you, with a one-click "Reinstall protection" button. Since 1.5.0 an hourly background watchdog also re-verifies protection even when nobody logs in: it reinstalls a missing drop-in automatically, detects when the plugin folder was moved or when the WP_DISABLE_FATAL_ERROR_HANDLER constant disables fatal error handling entirely, and notifies you (via your configured alert channels, or the admin email) when protection is lost and when it is restored. Note that WordPress cron runs on site traffic — on a site with no visitors at all, configure a real server cron for wp-cron.php as usual.
 
 = Can I filter, search, or export the error log? =
 
@@ -146,6 +153,15 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 4. Plugin causing fatal error was auto-deactivated for site safety.
 
 == Changelog ==
+
+= 1.5.0 - 28/07/2026 =
+- Added: Instant alerts — get an email and/or webhook (generic JSON or Slack-compatible) the moment a fatal error is detected, saying which plugin was involved and what action was taken; identical repeats are rate-limited by a configurable cooldown, and alerts that fire too early for WordPress to deliver are queued and sent on the next page load
+- Added: "Send test email" / "Send test webhook" buttons on the Settings tab
+- Added: Protection watchdog — an hourly background check that re-verifies the protection drop-in, silently reinstalls it when missing, reclaims it once if another plugin overwrote it, and alerts you when protection is lost or restored
+- Added: Two new protection statuses — "disabled" (fatal error handling turned off via WP_DISABLE_FATAL_ERROR_HANDLER) and "stranded" (the plugin folder was moved/renamed so the drop-in points at nothing) — surfaced in the banner, admin notice, and Site Health
+- Added: "Protection last verified" heartbeat on the log page and in Site Health debug info
+- Added: Out-of-memory resilience — a small reserved memory buffer lets logging and alerts work even when the fatal is a memory-exhaustion error
+- Added: The plugin's first public filter, fpad_watchdog_interval, to change the watchdog cadence
 
 = 1.4.0 - 23/07/2026 =
 - Added: Filter the Fatal Plugin Log by source and status, and search across plugin name, error message, and file path
@@ -202,6 +218,9 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 - Initial release
 
 == Upgrade Notice ==
+
+= 1.5.0 =
+Instant email/webhook (Slack-compatible) alerts when a fatal is detected, an hourly protection watchdog that self-heals and warns you when protection lapses, and out-of-memory resilience. Alerts are opt-in — nothing changes until you enable a channel.
 
 = 1.4.0 =
 The log viewer gains filtering, search, per-entry delete, CSV/JSON export, and copy-to-clipboard bug reports. Repeated fatals are now grouped with an occurrence count so a looping error can't bury your history.

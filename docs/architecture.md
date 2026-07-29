@@ -16,8 +16,9 @@ wp-content/
         ├── fatal-error-handler-dropin.php  ← drop-in SOURCE (copied to wp-content/)
         ├── class-fatal-error-handler.php   ← shutdown-context error handler
         ├── class-dropin-manager.php        ← install/remove/verify the drop-in copy
-        ├── class-admin.php                 ← notices, log page, action links
-        ├── class-plugin-lifecycle.php      ← activate/deactivate/uninstall + admin_init check
+        ├── class-admin.php                 ← notices, log page, settings, action links
+        ├── class-notifier.php              ← alert delivery on normal requests (1.5.0)
+        ├── class-plugin-lifecycle.php      ← activate/deactivate/uninstall + admin_init check + watchdog
         └── class-utils.php                 ← textdomain, self-update drop-in refresh
 ```
 
@@ -29,7 +30,7 @@ wp-content/
 
 1. Direct-access guard (`WPINC`), then constants: `FPAD_VERSION`, `FPAD_PLUGIN_BASENAME`, `FPAD_PLUGIN_DIR`, `FPAD_PLUGIN_URL`.
 2. `require_once` of the five class files in `includes/` (no autoloader).
-3. `FPAD_Utils::init()`, `FPAD_Admin::init()`, `FPAD_Plugin_Lifecycle::init()` — these only register hooks (see the [hook table in reference.md](reference.md#wordpress-hooks-used)); nothing executes until the hooks fire.
+3. `FPAD_Utils::init()`, `FPAD_Admin::init()`, `FPAD_Notifier::init()`, `FPAD_Plugin_Lifecycle::init()` — these only register hooks (see the [hook table in reference.md](reference.md#wordpress-hooks-used)); nothing executes until the hooks fire.
 4. `register_activation_hook` / `register_deactivation_hook` / `register_uninstall_hook` → `FPAD_Plugin_Lifecycle`.
 
 `FPAD_Dropin_Manager` and `FPAD_Fatal_Error_Handler` register nothing — they are instantiated on demand.
@@ -51,8 +52,11 @@ No hooks involved: WP core's shutdown handler loads `wp-content/fatal-error-hand
 | Activation / deactivation / uninstall | Plugin lifecycle | `FPAD_Plugin_Lifecycle::activate()` / `deactivate()` / `uninstall()` |
 | Drop-in self-heal | Every `admin_init` | `FPAD_Plugin_Lifecycle::check_dropin()` |
 | Self-update drop-in refresh | `upgrader_process_complete` | `FPAD_Utils::plugin_upgrade_hook()` |
+| Test notification | `admin-post.php?action=fpad_test_alert&channel=…` | `FPAD_Admin::handle_test_alert()` |
+| Alert-queue drain | `init` (prio 20) + hourly cron `fpad_notifier_drain` (lazily scheduled while a channel is enabled) | `FPAD_Notifier::drain_queue()` |
+| Protection watchdog | Hourly cron `fpad_watchdog_check` (interval filterable via `fpad_watchdog_interval`) | `FPAD_Plugin_Lifecycle::watchdog_check()` |
 
-There are no REST routes, AJAX handlers, cron events, shortcodes, or blocks.
+There are no REST routes, AJAX handlers, shortcodes, or blocks.
 
 ## How the two halves communicate
 
@@ -62,7 +66,10 @@ The shutdown handler and the normal plugin never call each other. They share exa
 |--------|-----------|---------|--------------------|
 | `fpad_deactivation_log` (permanent log) | `FPAD_Fatal_Error_Handler::add_to_deactivation_log()` — every fatal | `FPAD_Admin` log tab, export, Site Health debug info | Clear Log, per-entry delete, uninstall |
 | `fpad_deactivated_plugins` (notice queue) | `FPAD_Fatal_Error_Handler::store_deactivated_plugin_info()` — only on actual deactivation | `FPAD_Admin::display_admin_notices()` | Cleared immediately after notices display; uninstall |
-| `fpad_settings` (user settings) | `FPAD_Admin::handle_settings_save()` | `FPAD_Fatal_Error_Handler::get_settings()` (guarded) + `FPAD_Admin::get_settings()` | Uninstall |
+| `fpad_settings` (user settings) | `FPAD_Admin::handle_settings_save()` | `FPAD_Fatal_Error_Handler::get_settings()` (guarded) + `FPAD_Admin::get_settings()` (also used by `FPAD_Notifier`) | Uninstall |
+| `fpad_alert_state` (alert cooldowns) | `FPAD_Fatal_Error_Handler::maybe_notify()` + `FPAD_Notifier::process_queue()` | Both writers | 7-day prune on write; uninstall |
+| `fpad_alert_queue` (pending alerts) | `FPAD_Fatal_Error_Handler::queue_alert()` — only when a transport is missing at shutdown | `FPAD_Notifier::drain_queue()` (then emptied) | Drain; uninstall |
+| `fpad_watchdog_state` (watchdog incidents/heartbeat) | `FPAD_Plugin_Lifecycle::watchdog_check()` | Same + `FPAD_Admin::last_watchdog_check()` | Uninstall |
 
 This one-way data flow (settings flow admin → handler; incidents flow handler → admin) is why the handler duplicates small helpers like `get_settings()` instead of reusing admin code: the shutdown context cannot depend on any other class being loadable. Full schemas: [reference.md](reference.md#database-structure).
 
@@ -74,6 +81,7 @@ The drop-in source (`includes/fatal-error-handler-dropin.php`) is deliberately t
 
 - Defines `ABSPATH` and `FPAD_PLUGIN_DIR` **relative to its own location** (`wp-content/`), so the copy works regardless of install path.
 - Defines `QM_DISABLE_ERROR_HANDLER` to prevent Query Monitor's error handler from conflicting with ours.
+- Reserves a 256 KB buffer in `$GLOBALS['fpad_reserved_memory']` (since 1.5.0) which `handle()` frees as its first statement — headroom so logging and alerts survive out-of-memory fatals.
 - Requires `includes/class-fatal-error-handler.php` from the plugin directory and returns `new FPAD_Fatal_Error_Handler()`.
 
 Note: `FPAD_Dropin_Manager::create_dropin_source()` can regenerate the source file if the tracked one is missing. The generated content is kept functionally identical to the tracked source — paths derived relative to the drop-in's own location, `QM_DISABLE_ERROR_HANDLER` defined — only the header comment differs. The tracked file is what normally ships; the generator is a recovery path only. **When editing either, update the other** (see the sync-pairs table in [feature-map.md](feature-map.md#things-that-must-change-together-sync-pairs)).
@@ -104,8 +112,13 @@ handle()
  │                             (permanent, capped at 100, identical repeats coalesced
  │                             with a count); records the plugin + status if one was
  │                             attributed, else an "unattributed" entry
- └── display_custom_error_page()  HTTP 500, inline-styled HTML page, exit
-                                  (skipped entirely if headers already sent)
+ ├── display_custom_error_page()  HTTP 500, inline-styled HTML page, then FLUSHED to
+ │                             the client (skipped entirely if headers already sent)
+ ├── maybe_notify()            best-effort email/webhook alerts (1.5.0), deliberately
+ │                             AFTER the page flush so a hung transport can never
+ │                             delay the visitor; own Throwable guard; per-channel
+ │                             fingerprint cooldown; queues when transports missing
+ └── exit                      (only when the page was rendered)
 ```
 
 Key behaviors:
@@ -145,7 +158,8 @@ Ownership check: `FPAD_Dropin_Manager` identifies "our" drop-in by searching its
 | `FPAD_Fatal_Error_Handler` | Shutdown (via drop-in) | Detect fatal, attribute to plugin, deactivate, log, render error page |
 | `FPAD_Dropin_Manager` | Normal | Copy/remove/verify `wp-content/fatal-error-handler.php`; WP_Filesystem init |
 | `FPAD_Admin` | Admin | Error notices + protection warning, Tools → Fatal Plugin Log page (Log + Settings tabs, protection banner, filters/search, per-entry delete, CSV/JSON export, copy-report), clear-log/settings/reinstall handling, Site Health test + debug info, "Settings"/"View Log" action links, notice suppression on the log screen |
-| `FPAD_Plugin_Lifecycle` | Normal | Activation/deactivation/uninstall hooks; `admin_init` drop-in health check |
+| `FPAD_Plugin_Lifecycle` | Normal | Activation/deactivation/uninstall hooks; `admin_init` drop-in health check; hourly protection watchdog (verify → heal → alert) |
+| `FPAD_Notifier` | Normal | Deliver queued alerts (`init` + cron backstop); test sends; generic `dispatch_event()` used by the watchdog |
 | `FPAD_Utils` | Normal | Load textdomain; refresh drop-in after self-update |
 
 There is no autoloader and no namespace — classes use the `FPAD_` prefix and are `require_once`'d explicitly in the main plugin file. Initialization is static (`::init()`) for `FPAD_Utils`, `FPAD_Admin`, and `FPAD_Plugin_Lifecycle`; `FPAD_Dropin_Manager` and `FPAD_Fatal_Error_Handler` are instantiated on demand.

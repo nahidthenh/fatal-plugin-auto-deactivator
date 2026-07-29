@@ -166,6 +166,70 @@ class FPAD_Dropin_Manager {
 	}
 
 	/**
+	 * Verify protection end-to-end, for the watchdog and admin surfaces.
+	 *
+	 * Wraps get_status() with two checks it cannot see: core's global kill
+	 * switch (WP_DISABLE_FATAL_ERROR_HANDLER) and a drop-in whose require
+	 * target no longer resolves. The four non-active get_status() results
+	 * pass through unchanged.
+	 *
+	 * @return array {
+	 *     @type string $status One of: active, foreign, missing, unwritable,
+	 *                          no_filesystem, disabled, stranded.
+	 *     @type string $detail Short technical detail for logs/alerts
+	 *                          (deliberately untranslated).
+	 * }
+	 */
+	public function verify_protection() {
+		// Checked first: when core's kill switch is defined truthy, WordPress
+		// never invokes any fatal-error-handler drop-in, so every other status
+		// would be misleading.
+		if ( defined( 'WP_DISABLE_FATAL_ERROR_HANDLER' ) && WP_DISABLE_FATAL_ERROR_HANDLER ) {
+			return array(
+				'status' => 'disabled',
+				'detail' => 'WP_DISABLE_FATAL_ERROR_HANDLER is defined truthy',
+			);
+		}
+
+		$status = $this->get_status();
+
+		if ( 'active' !== $status ) {
+			$details = array(
+				'foreign'       => 'Drop-in exists but is not ours: ' . $this->dropin_path,
+				'missing'       => 'Drop-in not installed: ' . $this->dropin_path,
+				'unwritable'    => 'wp-content directory is not writable: ' . WP_CONTENT_DIR,
+				'no_filesystem' => 'WP_Filesystem could not be initialized',
+			);
+
+			return array(
+				'status' => $status,
+				'detail' => isset( $details[ $status ] ) ? $details[ $status ] : $status,
+			);
+		}
+
+		// The drop-in is ours — but would its require target resolve at crash
+		// time? Compute the class-file path the way the DROP-IN itself computes
+		// it (relative to WP_CONTENT_DIR), deliberately NOT via the
+		// FPAD_PLUGIN_DIR constant: on symlinked installs the two can differ,
+		// and it is the drop-in's own path that must resolve when a fatal hits.
+		// This is a sync pair with the FPAD_PLUGIN_DIR definition in
+		// includes/fatal-error-handler-dropin.php (and its generator).
+		$handler_path = WP_CONTENT_DIR . '/plugins/fatal-plugin-auto-deactivator/includes/class-fatal-error-handler.php';
+
+		if ( ! is_file( $handler_path ) || ! is_readable( $handler_path ) ) {
+			return array(
+				'status' => 'stranded',
+				'detail' => 'Drop-in require target is not a readable file: ' . $handler_path,
+			);
+		}
+
+		return array(
+			'status' => 'active',
+			'detail' => '',
+		);
+	}
+
+	/**
 	 * Read the installed drop-in's contents, or false when it can't be read.
 	 *
 	 * @return string|false
@@ -230,6 +294,10 @@ if ( ! defined( \'ABSPATH\' ) ) {
 if ( ! defined( \'FPAD_PLUGIN_DIR\' ) ) {
 	define( \'FPAD_PLUGIN_DIR\', dirname( __FILE__ ) . \'/plugins/fatal-plugin-auto-deactivator/\' );
 }
+
+// Reserve a memory buffer the handler frees on entry, so logging and alerts
+// still work when the fatal is an out-of-memory error.
+$GLOBALS[\'fpad_reserved_memory\'] = str_repeat( \'x\', 256 * 1024 );
 
 // Include the fatal error handler class.
 if ( ! class_exists( \'FPAD_Fatal_Error_Handler\' ) ) {

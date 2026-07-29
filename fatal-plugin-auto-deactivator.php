@@ -3,7 +3,7 @@
  * Plugin Name: Fatal Plugin Auto Deactivator
  * Plugin URI: https://wordpress.org/plugins/fatal-plugin-auto-deactivator/
  * Description: Automatically deactivates plugins that cause fatal errors to prevent site crashes.
- * Version: 1.4.0
+ * Version: 1.5.0
  * Author: Linkon Miyan
  * Author URI: https://profiles.wordpress.org/rudlinkon/
  * License: GPL-2.0+
@@ -22,7 +22,7 @@ if ( ! defined( 'WPINC' ) ) {
 
 // Define plugin constants
 if ( ! defined( 'FPAD_VERSION' ) ) {
-	define( 'FPAD_VERSION', '1.4.0' );
+	define( 'FPAD_VERSION', '1.5.0' );
 }
 
 if ( ! defined( 'FPAD_PLUGIN_BASENAME' ) ) {
@@ -43,6 +43,7 @@ if ( ! defined( 'FPAD_PLUGIN_URL' ) ) {
 require_once FPAD_PLUGIN_DIR . 'includes/class-fatal-error-handler.php';
 require_once FPAD_PLUGIN_DIR . 'includes/class-dropin-manager.php';
 require_once FPAD_PLUGIN_DIR . 'includes/class-admin.php';
+require_once FPAD_PLUGIN_DIR . 'includes/class-notifier.php';
 require_once FPAD_PLUGIN_DIR . 'includes/class-plugin-lifecycle.php';
 require_once FPAD_PLUGIN_DIR . 'includes/class-utils.php';
 
@@ -51,6 +52,7 @@ require_once FPAD_PLUGIN_DIR . 'includes/class-utils.php';
  */
 FPAD_Utils::init();
 FPAD_Admin::init();
+FPAD_Notifier::init();
 FPAD_Plugin_Lifecycle::init();
 
 /**

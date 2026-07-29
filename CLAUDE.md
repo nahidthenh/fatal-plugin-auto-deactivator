@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Fatal Plugin Auto Deactivator** (slug: `fatal-plugin-auto-deactivator`) is a WordPress.org-distributed plugin that automatically deactivates any plugin causing a fatal PHP error, logs the incident, and shows a custom error page instead of the white screen of death. Plain PHP — no build step, no test suite, no node/npm. No REST endpoints, no AJAX, no cron, no public hooks.
+**Fatal Plugin Auto Deactivator** (slug: `fatal-plugin-auto-deactivator`) is a WordPress.org-distributed plugin that automatically deactivates any plugin causing a fatal PHP error, logs the incident, and shows a custom error page instead of the white screen of death. Plain PHP — no build step, no test suite, no node/npm. No REST endpoints, no AJAX. Since 1.5.0: two cron events (watchdog + alert drain) and one public filter (`fpad_watchdog_interval`).
 
 Detailed docs live in `docs/` (excluded from distribution; keep them updated when behavior changes):
 - `docs/feature-map.md` — **feature → file/function lookup, sync pairs, playbooks for common changes; start here when locating or changing a feature**
@@ -41,16 +41,22 @@ The drop-in file must always exist and reference a valid class file inside this 
 - `FPAD_Fatal_Error_Handler` — error detection, plugin matching/deactivation, logging, custom error page (shutdown context, guarded WP calls only). Deactivation honors `fpad_settings` (log-only mode + protected-plugins allowlist), read via the guarded `get_settings()`; a matched-but-not-deactivated plugin is still attributed and logged with a `status`.
 - `FPAD_Dropin_Manager` — install/remove/verify the drop-in copy in `wp-content/`; `get_status()` reports protection state (`active`/`foreign`/`missing`/`unwritable`/`no_filesystem`). Ownership is matched against the `OWNERSHIP_MARKER` constant.
 - `FPAD_Admin` — admin notices, Tools → "Fatal Plugin Log" page (`tools.php?page=fpad-log`) with **Log** + **Settings** tabs and a protection-status banner, clear-log form (nonce `fpad_clear_log`), settings form (nonce `fpad_save_settings`), nonce'd reinstall action (`fpad_reinstall`), site-wide protection warning notice, Site Health test + debug info, "Settings"/"View Log" plugin action links. The log viewer (since 1.4.0) also supports source/status filters + search (GET), per-entry delete (`fpad_delete_{key}` nonce), CSV/JSON export (`admin_post_fpad_export_log`, nonce `fpad_export_log`), and a vanilla-JS copy-to-clipboard bug report. On the log screen it also strips other plugins'/core `admin_notices` via `current_screen` (`maybe_suppress_admin_notices`), keeping only its own inline banner and `settings_errors()` feedback.
-- `FPAD_Plugin_Lifecycle` — activation/deactivation/uninstall hooks + `admin_init` drop-in check.
+- `FPAD_Plugin_Lifecycle` — activation/deactivation/uninstall hooks + `admin_init` drop-in check + hourly protection **watchdog** (`fpad_watchdog_check` cron: `verify_protection()` → heal missing/foreign → alert; state in `fpad_watchdog_state`; interval filter `fpad_watchdog_interval` — the plugin's only public hook).
+- `FPAD_Notifier` — (1.5.0) alert delivery on normal requests: drains `fpad_alert_queue` (`init` prio 20 + lazy hourly cron `fpad_notifier_drain`), test sends, and `dispatch_event()` used by the watchdog (falls back to `wp_mail(admin_email)` when no channel configured).
 - `FPAD_Utils` — textdomain loading + self-update drop-in refresh.
+
+Since 1.5.0 the shutdown handler also sends **instant alerts** (`maybe_notify()`: email + webhook json/slack, per-fingerprint cooldown via `fpad_alert_state`, queue fallback when transports are missing) and the drop-in reserves a 256 KB buffer freed on `handle()` entry so OOM fatals still log/alert. `verify_protection()` adds statuses `disabled` (`WP_DISABLE_FATAL_ERROR_HANDLER`) and `stranded` (drop-in's require target unreadable) on top of `get_status()`.
 
 ### Data storage (wp_options only, no custom tables)
 
 - `fpad_deactivated_plugins` — pending admin-notice queue; written only when a plugin is actually deactivated; cleared after notices display.
 - `fpad_deactivation_log` — permanent log, newest first, capped at 100 entries; written for **every** detected fatal (attributed or not). Entries carry `deactivated` (bool) and `status` (`deactivated`/`protected`/`log_only`/`unavailable`/`unattributed`); unattributed fatals have empty `plugin`/`plugin_name`. Since 1.4.0 identical repeats are coalesced (fingerprint of type|file|line|msg|plugin|status) into one entry with `count` + `first_time`, and entries also store `request_uri`/`php_version`/`wp_version`; `error_msg` is capped at 2000 chars.
-- `fpad_settings` — user settings: `log_only` (bool) and `protected_plugins` (array of basenames never auto-deactivated). Read in the shutdown handler (guarded) and the admin.
+- `fpad_settings` — user settings: `log_only` (bool), `protected_plugins` (array of basenames never auto-deactivated), and since 1.5.0 the notification keys (`notify_email`, `notify_email_to`, `notify_webhook`, `notify_webhook_url`, `notify_webhook_format`, `notify_statuses`, `notify_cooldown`). Read via **two mirrored `get_settings()` implementations** (guarded in the handler, public in `FPAD_Admin`) whose defaults must stay identical — a documented sync pair.
+- `fpad_alert_state` (1.5.0) — per-fingerprint alert cooldown timestamps, 7-day prune.
+- `fpad_alert_queue` (1.5.0) — alerts queued when transports were unavailable at shutdown; cap 20; drained by `FPAD_Notifier`.
+- `fpad_watchdog_state` (1.5.0) — watchdog heartbeat/incident state.
 
-All three options are deleted on uninstall.
+All six options are deleted on uninstall. Cron events: `fpad_watchdog_check` (scheduled on activation + self-healed from `check_dropin()`), `fpad_notifier_drain` (lazily scheduled only while a notification channel is enabled). Both cleared on deactivation/uninstall.
 
 ## Versioning and release
 

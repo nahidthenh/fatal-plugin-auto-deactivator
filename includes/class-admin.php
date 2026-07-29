@@ -29,6 +29,7 @@ class FPAD_Admin {
 		add_filter( 'site_status_tests', array( __CLASS__, 'register_site_health_test' ) );
 		add_filter( 'debug_information', array( __CLASS__, 'add_debug_information' ) );
 		add_action( 'admin_post_fpad_export_log', array( __CLASS__, 'export_log' ) );
+		add_action( 'admin_post_fpad_test_alert', array( __CLASS__, 'handle_test_alert' ) );
 		add_action( 'current_screen', array( __CLASS__, 'maybe_suppress_admin_notices' ) );
 	}
 
@@ -133,6 +134,28 @@ class FPAD_Admin {
 		// Surface the outcome of a per-entry delete (post-redirect).
 		if ( isset( $_GET['fpad_deleted'] ) ) { //phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			add_settings_error( 'fpad_messages', 'fpad_deleted', __( 'Log entry deleted.', 'fatal-plugin-auto-deactivator' ), 'success' );
+		}
+
+		// Surface the outcome of a test notification (post-redirect).
+		if ( isset( $_GET['fpad_test'] ) ) { //phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$test_ok     = '1' === $_GET['fpad_test']; //phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$test_detail = isset( $_GET['fpad_test_detail'] ) ? sanitize_text_field( wp_unslash( $_GET['fpad_test_detail'] ) ) : ''; //phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			if ( $test_ok ) {
+				add_settings_error( 'fpad_messages', 'fpad_test', __( 'Test notification sent.', 'fatal-plugin-auto-deactivator' ), 'success' );
+			} else {
+				add_settings_error(
+					'fpad_messages',
+					'fpad_test',
+					sprintf(
+						/* translators: %s: transport error detail, e.g. an HTTP status code. */
+						__( 'Test notification failed: %s', 'fatal-plugin-auto-deactivator' ),
+						// settings_errors() prints messages unescaped, and this query
+						// arg is craftable without a nonce — escape and bound it.
+						esc_html( substr( $test_detail, 0, 200 ) )
+					),
+					'error'
+				);
+			}
 		}
 
 		// Determine the active tab.
@@ -768,19 +791,44 @@ class FPAD_Admin {
 	/**
 	 * Read the plugin settings with defaults.
 	 *
+	 * Public because FPAD_Notifier reads the notification settings through this
+	 * method; keep it the single admin-side reader so only two mirrors exist
+	 * (this one and the guarded copy in FPAD_Fatal_Error_Handler — sync pair).
+	 *
 	 * @return array
 	 */
-	private static function get_settings() {
+	public static function get_settings() {
+		$notify_statuses_default = array( 'deactivated', 'protected', 'log_only', 'unavailable', 'unattributed' );
+
 		$settings = get_option( 'fpad_settings', array() );
 		if ( ! is_array( $settings ) ) {
 			$settings = array();
 		}
 
 		return array(
-			'log_only'          => ! empty( $settings['log_only'] ),
-			'protected_plugins' => ( isset( $settings['protected_plugins'] ) && is_array( $settings['protected_plugins'] ) )
+			'log_only'              => ! empty( $settings['log_only'] ),
+			'protected_plugins'     => ( isset( $settings['protected_plugins'] ) && is_array( $settings['protected_plugins'] ) )
 				? $settings['protected_plugins']
 				: array(),
+			'notify_email'          => ! empty( $settings['notify_email'] ),
+			'notify_email_to'       => ( isset( $settings['notify_email_to'] ) && is_string( $settings['notify_email_to'] ) )
+				? $settings['notify_email_to']
+				: '',
+			'notify_webhook'        => ! empty( $settings['notify_webhook'] ),
+			'notify_webhook_url'    => ( isset( $settings['notify_webhook_url'] ) && is_string( $settings['notify_webhook_url'] ) )
+				? $settings['notify_webhook_url']
+				: '',
+			'notify_webhook_format' => ( isset( $settings['notify_webhook_format'] ) && in_array( $settings['notify_webhook_format'], array( 'json', 'slack' ), true ) )
+				? $settings['notify_webhook_format']
+				: 'json',
+			// A saved-but-empty array is a deliberate "notify about nothing" choice;
+			// only a missing/malformed value falls back to the defaults.
+			'notify_statuses'       => ( isset( $settings['notify_statuses'] ) && is_array( $settings['notify_statuses'] ) )
+				? array_values( array_intersect( $settings['notify_statuses'], $notify_statuses_default ) )
+				: $notify_statuses_default,
+			'notify_cooldown'       => ( isset( $settings['notify_cooldown'] ) && is_numeric( $settings['notify_cooldown'] ) )
+				? max( 60, min( 86400, (int) $settings['notify_cooldown'] ) )
+				: 900,
 		);
 	}
 
@@ -849,8 +897,78 @@ class FPAD_Admin {
 		echo '</td></tr>';
 
 		echo '</tbody></table>';
+
+		echo '<h2>' . esc_html__( 'Notifications', 'fatal-plugin-auto-deactivator' ) . '</h2>';
+		echo '<p class="description">' . esc_html__( 'Get an instant email or webhook alert when a fatal error is detected. Alerts contain the same detail as the log, so send them only to endpoints you control.', 'fatal-plugin-auto-deactivator' ) . '</p>';
+
+		echo '<table class="form-table" role="presentation"><tbody>';
+
+		echo '<tr><th scope="row">' . esc_html__( 'Email alerts', 'fatal-plugin-auto-deactivator' ) . '</th><td>';
+		echo '<label><input type="checkbox" name="fpad_notify_email" value="1"' . checked( $settings['notify_email'], true, false ) . '> ';
+		echo esc_html__( 'Send an email when a fatal error is detected.', 'fatal-plugin-auto-deactivator' ) . '</label>';
+		echo '</td></tr>';
+
+		echo '<tr><th scope="row">' . esc_html__( 'Email recipients', 'fatal-plugin-auto-deactivator' ) . '</th><td>';
+		echo '<input type="text" name="fpad_notify_email_to" value="' . esc_attr( $settings['notify_email_to'] ) . '" class="regular-text" placeholder="' . esc_attr( get_option( 'admin_email' ) ) . '">';
+		echo '<p class="description">' . esc_html__( 'Comma-separated email addresses. Leave empty to use the site admin email.', 'fatal-plugin-auto-deactivator' ) . '</p>';
+		echo '</td></tr>';
+
+		echo '<tr><th scope="row">' . esc_html__( 'Webhook alerts', 'fatal-plugin-auto-deactivator' ) . '</th><td>';
+		echo '<label><input type="checkbox" name="fpad_notify_webhook" value="1"' . checked( $settings['notify_webhook'], true, false ) . '> ';
+		echo esc_html__( 'POST a webhook when a fatal error is detected.', 'fatal-plugin-auto-deactivator' ) . '</label>';
+		echo '</td></tr>';
+
+		echo '<tr><th scope="row">' . esc_html__( 'Webhook URL', 'fatal-plugin-auto-deactivator' ) . '</th><td>';
+		echo '<input type="url" name="fpad_notify_webhook_url" value="' . esc_url( $settings['notify_webhook_url'] ) . '" class="regular-text" placeholder="https://example.com/webhook">';
+		echo '<p class="description">' . esc_html__( 'Must use https:// (plain http:// is allowed only for localhost).', 'fatal-plugin-auto-deactivator' ) . '</p>';
+		echo '</td></tr>';
+
+		echo '<tr><th scope="row">' . esc_html__( 'Webhook format', 'fatal-plugin-auto-deactivator' ) . '</th><td>';
+		echo '<label style="margin-right:16px;"><input type="radio" name="fpad_notify_webhook_format" value="json"' . checked( $settings['notify_webhook_format'], 'json', false ) . '> ' . esc_html__( 'Generic JSON', 'fatal-plugin-auto-deactivator' ) . '</label>';
+		echo '<label><input type="radio" name="fpad_notify_webhook_format" value="slack"' . checked( $settings['notify_webhook_format'], 'slack', false ) . '> ' . esc_html__( 'Slack-compatible', 'fatal-plugin-auto-deactivator' ) . '</label>';
+		echo '</td></tr>';
+
+		echo '<tr><th scope="row">' . esc_html__( 'Notify about', 'fatal-plugin-auto-deactivator' ) . '</th><td>';
+		echo '<fieldset>';
+		$status_labels = array(
+			'deactivated'  => __( 'Deactivated', 'fatal-plugin-auto-deactivator' ),
+			'protected'    => __( 'Protected', 'fatal-plugin-auto-deactivator' ),
+			'log_only'     => __( 'Log only', 'fatal-plugin-auto-deactivator' ),
+			'unavailable'  => __( 'Could not deactivate', 'fatal-plugin-auto-deactivator' ),
+			'unattributed' => __( 'Not attributed', 'fatal-plugin-auto-deactivator' ),
+		);
+		foreach ( $status_labels as $status_key => $status_label ) {
+			echo '<label style="display:block;margin:4px 0;"><input type="checkbox" name="fpad_notify_statuses[]" value="' . esc_attr( $status_key ) . '"' . checked( in_array( $status_key, $settings['notify_statuses'], true ), true, false ) . '> ' . esc_html( $status_label ) . '</label>';
+		}
+		echo '</fieldset>';
+		echo '</td></tr>';
+
+		echo '<tr><th scope="row">' . esc_html__( 'Alert cooldown', 'fatal-plugin-auto-deactivator' ) . '</th><td>';
+		echo '<input type="number" name="fpad_notify_cooldown" value="' . esc_attr( $settings['notify_cooldown'] ) . '" min="60" max="86400" step="1" class="small-text"> ' . esc_html__( 'seconds', 'fatal-plugin-auto-deactivator' );
+		echo '<p class="description">' . esc_html__( 'Minimum time between repeated alerts for the same identical error, so a looping fatal cannot flood your inbox or channel.', 'fatal-plugin-auto-deactivator' ) . '</p>';
+		echo '</td></tr>';
+
+		echo '</tbody></table>';
 		submit_button( __( 'Save Settings', 'fatal-plugin-auto-deactivator' ) );
 		echo '</form>';
+
+		// Test-send buttons live outside the settings form (they are nonce'd GET
+		// links to admin-post.php, and forms cannot nest). One per enabled channel.
+		$test_buttons = array();
+		if ( $settings['notify_email'] ) {
+			$test_buttons['email'] = __( 'Send test email', 'fatal-plugin-auto-deactivator' );
+		}
+		if ( $settings['notify_webhook'] && '' !== $settings['notify_webhook_url'] ) {
+			$test_buttons['webhook'] = __( 'Send test webhook', 'fatal-plugin-auto-deactivator' );
+		}
+		if ( $test_buttons ) {
+			echo '<p>';
+			foreach ( $test_buttons as $channel => $label ) {
+				$test_url = wp_nonce_url( admin_url( 'admin-post.php?action=fpad_test_alert&channel=' . $channel ), 'fpad_test_alert' );
+				echo '<a href="' . esc_url( $test_url ) . '" class="button" style="margin-right:8px;">' . esc_html( $label ) . '</a>';
+			}
+			echo '</p>';
+		}
 	}
 
 	/**
@@ -876,13 +994,90 @@ class FPAD_Admin {
 			$protected = array_values( array_intersect( $submitted, $valid ) );
 		}
 
+		// Notifications: email channel. Invalid addresses are dropped silently;
+		// an empty list means "use the admin email" at send time.
+		$notify_email = ! empty( $_POST['fpad_notify_email'] );
+
+		$email_to = '';
+		if ( isset( $_POST['fpad_notify_email_to'] ) ) {
+			$recipients = array();
+			foreach ( explode( ',', sanitize_text_field( wp_unslash( $_POST['fpad_notify_email_to'] ) ) ) as $candidate ) {
+				$candidate = sanitize_email( trim( $candidate ) );
+				if ( '' !== $candidate ) {
+					$recipients[] = $candidate;
+				}
+			}
+			$email_to = implode( ',', $recipients );
+		}
+
+		// Notifications: webhook channel. The URL is POSTed to on every alert, so
+		// require https (plain http only for local development targets).
+		$notify_webhook = ! empty( $_POST['fpad_notify_webhook'] );
+
+		$webhook_url = '';
+		if ( ! empty( $_POST['fpad_notify_webhook_url'] ) ) {
+			$raw      = esc_url_raw( wp_unslash( $_POST['fpad_notify_webhook_url'] ) );
+			$scheme   = wp_parse_url( $raw, PHP_URL_SCHEME );
+			$host     = wp_parse_url( $raw, PHP_URL_HOST );
+			$loopback = in_array( $host, array( 'localhost', '127.0.0.1' ), true );
+
+			if ( $loopback && in_array( $scheme, array( 'http', 'https' ), true ) ) {
+				// wp_http_validate_url() rejects loopback hosts outright, so the
+				// documented localhost exception is validated manually; the send
+				// paths skip reject_unsafe_urls for loopback for the same reason.
+				$webhook_url = $raw;
+			} else {
+				$candidate = wp_http_validate_url( $raw );
+				if ( $candidate && 'https' === wp_parse_url( $candidate, PHP_URL_SCHEME ) ) {
+					$webhook_url = $candidate;
+				} else {
+					add_settings_error( 'fpad_messages', 'fpad_webhook_url', __( 'Webhook URL rejected: enter a valid https:// URL (http:// is allowed only for localhost).', 'fatal-plugin-auto-deactivator' ), 'error' );
+				}
+			}
+		}
+
+		$webhook_format = 'json';
+		if ( isset( $_POST['fpad_notify_webhook_format'] ) ) {
+			$candidate = sanitize_key( wp_unslash( $_POST['fpad_notify_webhook_format'] ) );
+			if ( in_array( $candidate, array( 'json', 'slack' ), true ) ) {
+				$webhook_format = $candidate;
+			}
+		}
+
+		// Unchecking every status is a valid "notify about nothing" choice.
+		$notify_statuses = array();
+		if ( isset( $_POST['fpad_notify_statuses'] ) && is_array( $_POST['fpad_notify_statuses'] ) ) {
+			$allowed_statuses = array( 'deactivated', 'protected', 'log_only', 'unavailable', 'unattributed' );
+			$notify_statuses  = array_values( array_intersect( array_map( 'sanitize_key', wp_unslash( $_POST['fpad_notify_statuses'] ) ), $allowed_statuses ) );
+		}
+
+		$notify_cooldown = 900;
+		if ( isset( $_POST['fpad_notify_cooldown'] ) && '' !== $_POST['fpad_notify_cooldown'] ) {
+			$notify_cooldown = max( 60, min( 86400, absint( wp_unslash( $_POST['fpad_notify_cooldown'] ) ) ) );
+		}
+
 		update_option(
 			'fpad_settings',
 			array(
-				'log_only'          => $log_only,
-				'protected_plugins' => $protected,
+				'log_only'              => $log_only,
+				'protected_plugins'     => $protected,
+				'notify_email'          => $notify_email,
+				'notify_email_to'       => $email_to,
+				'notify_webhook'        => $notify_webhook,
+				'notify_webhook_url'    => $webhook_url,
+				'notify_webhook_format' => $webhook_format,
+				'notify_statuses'       => $notify_statuses,
+				'notify_cooldown'       => $notify_cooldown,
 			)
 		);
+
+		// The queue-drain cron exists only while a usable channel is enabled, so
+		// installs that never enable notifications keep zero fpad cron rows.
+		if ( $notify_email || ( $notify_webhook && '' !== $webhook_url ) ) {
+			FPAD_Notifier::maybe_schedule_drain();
+		} else {
+			wp_clear_scheduled_hook( 'fpad_notifier_drain' );
+		}
 
 		add_settings_error( 'fpad_messages', 'fpad_settings_saved', __( 'Settings saved.', 'fatal-plugin-auto-deactivator' ), 'success' );
 	}
@@ -890,12 +1085,13 @@ class FPAD_Admin {
 	/**
 	 * Current protection status, via the drop-in manager.
 	 *
-	 * @return string active|foreign|missing|unwritable|no_filesystem
+	 * @return string active|foreign|missing|unwritable|no_filesystem|disabled|stranded
 	 */
 	private static function get_protection_state() {
-		$manager = new FPAD_Dropin_Manager();
+		$manager      = new FPAD_Dropin_Manager();
+		$verification = $manager->verify_protection();
 
-		return $manager->get_status();
+		return $verification['status'];
 	}
 
 	/**
@@ -914,6 +1110,10 @@ class FPAD_Admin {
 				return __( 'WordPress could not access the filesystem (credentials may be required), so the protection file could not be installed.', 'fatal-plugin-auto-deactivator' );
 			case 'missing':
 				return __( 'The protection file is not installed, so your site is not currently protected.', 'fatal-plugin-auto-deactivator' );
+			case 'disabled':
+				return __( 'The WP_DISABLE_FATAL_ERROR_HANDLER constant is enabled (usually in wp-config.php), so WordPress never runs any fatal error handler and Fatal Plugin Auto Deactivator cannot protect your site. Remove that constant to restore protection.', 'fatal-plugin-auto-deactivator' );
+			case 'stranded':
+				return __( 'The protection file is installed but points at nothing: the plugin folder appears to have been moved or renamed, so wp-content/plugins/fatal-plugin-auto-deactivator no longer contains the handler it tries to load. Restore the plugin to that folder to fix protection.', 'fatal-plugin-auto-deactivator' );
 		}
 
 		return '';
@@ -972,12 +1172,39 @@ class FPAD_Admin {
 
 		if ( 'active' === $status ) {
 			echo '<div class="notice notice-success inline"><p>' . esc_html__( 'Protection active — the fatal error handler drop-in is installed.', 'fatal-plugin-auto-deactivator' ) . '</p></div>';
-
-			return;
+		} else {
+			echo '<div class="notice notice-error inline"><p>' . esc_html( self::protection_message( $status ) );
+			echo ' <a href="' . esc_url( self::reinstall_url() ) . '" class="button button-secondary">' . esc_html__( 'Reinstall protection', 'fatal-plugin-auto-deactivator' ) . '</a></p></div>';
 		}
 
-		echo '<div class="notice notice-error inline"><p>' . esc_html( self::protection_message( $status ) );
-		echo ' <a href="' . esc_url( self::reinstall_url() ) . '" class="button button-secondary">' . esc_html__( 'Reinstall protection', 'fatal-plugin-auto-deactivator' ) . '</a></p></div>';
+		// Watchdog heartbeat, so admins can see protection is re-verified on a schedule.
+		$last_check = self::last_watchdog_check();
+		if ( $last_check ) {
+			/* translators: %s: human-readable time difference, e.g. "5 mins". */
+			$verified = sprintf( __( '%s ago', 'fatal-plugin-auto-deactivator' ), human_time_diff( $last_check ) );
+		} else {
+			$verified = '—';
+		}
+
+		echo '<p class="description">' . sprintf(
+			/* translators: %s: relative time since the watchdog last verified protection, or an em dash when it has not run yet. */
+			esc_html__( 'Protection last verified: %s', 'fatal-plugin-auto-deactivator' ),
+			esc_html( $verified )
+		) . '</p>';
+	}
+
+	/**
+	 * Timestamp of the watchdog's most recent check, or 0 when it has not run.
+	 *
+	 * Reads fpad_watchdog_state defensively: the option does not exist until
+	 * the first watchdog run and must not raise notices when absent.
+	 *
+	 * @return int
+	 */
+	private static function last_watchdog_check() {
+		$state = get_option( 'fpad_watchdog_state', array() );
+
+		return ( is_array( $state ) && ! empty( $state['last_check'] ) ) ? (int) $state['last_check'] : 0;
 	}
 
 	/**
@@ -1134,6 +1361,33 @@ class FPAD_Admin {
 	}
 
 	/**
+	 * Send a test notification (admin-post handler), then redirect back to the
+	 * Settings tab with the outcome — including the webhook HTTP code on failure.
+	 */
+	public static function handle_test_alert() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You are not allowed to send test notifications.', 'fatal-plugin-auto-deactivator' ) );
+		}
+
+		check_admin_referer( 'fpad_test_alert' );
+
+		$channel = isset( $_GET['channel'] ) ? sanitize_key( wp_unslash( $_GET['channel'] ) ) : '';
+
+		$result = FPAD_Notifier::send_test( $channel );
+
+		wp_safe_redirect(
+			add_query_arg(
+				array(
+					'fpad_test'        => $result['success'] ? '1' : '0',
+					'fpad_test_detail' => rawurlencode( $result['detail'] ),
+				),
+				admin_url( 'tools.php?page=fpad-log&tab=settings' )
+			)
+		);
+		exit;
+	}
+
+	/**
 	 * Build a plain-text report for a single entry, for pasting into a support thread.
 	 *
 	 * Intentionally untranslated: it is a developer-facing payload, not UI copy.
@@ -1239,33 +1493,38 @@ class FPAD_Admin {
 		$settings = self::get_settings();
 		$status   = self::get_protection_state();
 		$last     = ! empty( $log[0]['time'] ) ? wp_date( 'Y-m-d H:i:s', $log[0]['time'] ) : '—';
+		$verified = self::last_watchdog_check();
 
 		$info['fpad'] = array(
 			'label'  => __( 'Fatal Plugin Auto Deactivator', 'fatal-plugin-auto-deactivator' ),
 			'fields' => array(
-				'version'       => array(
+				'version'             => array(
 					'label' => __( 'Version', 'fatal-plugin-auto-deactivator' ),
 					'value' => FPAD_VERSION,
 				),
-				'protection'    => array(
+				'protection'          => array(
 					'label' => __( 'Protection status', 'fatal-plugin-auto-deactivator' ),
 					'value' => $status,
 				),
-				'log_only'      => array(
+				'log_only'            => array(
 					'label' => __( 'Log-only mode', 'fatal-plugin-auto-deactivator' ),
 					'value' => $settings['log_only'] ? __( 'Yes', 'fatal-plugin-auto-deactivator' ) : __( 'No', 'fatal-plugin-auto-deactivator' ),
 				),
-				'protected'     => array(
+				'protected'           => array(
 					'label' => __( 'Protected plugins', 'fatal-plugin-auto-deactivator' ),
 					'value' => count( $settings['protected_plugins'] ),
 				),
-				'logged_fatals' => array(
+				'logged_fatals'       => array(
 					'label' => __( 'Logged fatal errors', 'fatal-plugin-auto-deactivator' ),
 					'value' => count( $log ),
 				),
-				'last_fatal'    => array(
+				'last_fatal'          => array(
 					'label' => __( 'Most recent fatal', 'fatal-plugin-auto-deactivator' ),
 					'value' => $last,
+				),
+				'last_watchdog_check' => array(
+					'label' => __( 'Protection last verified', 'fatal-plugin-auto-deactivator' ),
+					'value' => $verified ? wp_date( 'Y-m-d H:i:s', $verified ) : '—',
 				),
 			),
 		);

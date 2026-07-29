@@ -22,6 +22,10 @@ class FPAD_Fatal_Error_Handler {
 	 * Handle fatal errors
 	 */
 	public function handle() {
+		// Free the buffer reserved by the drop-in so an out-of-memory fatal leaves
+		// the handler ~256 KB of headroom to log and send alerts.
+		unset( $GLOBALS['fpad_reserved_memory'] );
+
 		try {
 			// During WordPress's plugin/theme editor syntax check (a loopback "scrape"
 			// request), step aside so core can finish its own validation. Our exit()
@@ -44,8 +48,18 @@ class FPAD_Fatal_Error_Handler {
 			// regardless of whether the error could be attributed to a plugin.
 			$this->add_to_deactivation_log( $error, $plugin_result );
 
-			// Display our custom error page
-			$this->display_custom_error_page( $error, $plugin_result );
+			// Render and flush the error page BEFORE sending alerts: by the time a
+			// mail/HTTP transport runs (either can hang on a broken stack, and
+			// wp_mail has no timeout control), the visitor already has the page.
+			$page_rendered = $this->display_custom_error_page( $error, $plugin_result );
+
+			// Best-effort instant alerts; internally guarded so an alerting failure
+			// cannot skip the exit below.
+			$this->maybe_notify( $error, $plugin_result );
+
+			if ( $page_rendered ) {
+				exit;
+			}
 		} catch ( Throwable $e ) {
 			// Catch any error or exception thrown by the handler and remain silent
 		}
@@ -164,14 +178,32 @@ class FPAD_Fatal_Error_Handler {
 	 * rather than depending on the admin layer.
 	 *
 	 * @return array {
-	 *     @type bool  $log_only          Detect and log only; never deactivate.
-	 *     @type array $protected_plugins Plugin basenames that must never be deactivated.
+	 *     @type bool   $log_only              Detect and log only; never deactivate.
+	 *     @type array  $protected_plugins     Plugin basenames that must never be deactivated.
+	 *     @type bool   $notify_email          Email alert channel enabled.
+	 *     @type string $notify_email_to       Comma-separated recipients; '' means the admin email.
+	 *     @type bool   $notify_webhook        Webhook alert channel enabled.
+	 *     @type string $notify_webhook_url    Webhook endpoint URL.
+	 *     @type string $notify_webhook_format 'json' or 'slack'.
+	 *     @type array  $notify_statuses       Outcome statuses that trigger an alert.
+	 *     @type int    $notify_cooldown       Per-fingerprint alert cooldown in seconds.
 	 * }
 	 */
 	protected function get_settings() {
+		// Mirrored in FPAD_Admin::get_settings() (sync pair): defaults and
+		// normalization must stay identical on both sides.
+		$notify_statuses_default = array( 'deactivated', 'protected', 'log_only', 'unavailable', 'unattributed' );
+
 		$defaults = array(
-			'log_only'          => false,
-			'protected_plugins' => array(),
+			'log_only'              => false,
+			'protected_plugins'     => array(),
+			'notify_email'          => false,
+			'notify_email_to'       => '',
+			'notify_webhook'        => false,
+			'notify_webhook_url'    => '',
+			'notify_webhook_format' => 'json',
+			'notify_statuses'       => $notify_statuses_default,
+			'notify_cooldown'       => 900,
 		);
 
 		if ( ! function_exists( 'get_option' ) ) {
@@ -184,10 +216,29 @@ class FPAD_Fatal_Error_Handler {
 		}
 
 		return array(
-			'log_only'          => ! empty( $settings['log_only'] ),
-			'protected_plugins' => ( isset( $settings['protected_plugins'] ) && is_array( $settings['protected_plugins'] ) )
+			'log_only'              => ! empty( $settings['log_only'] ),
+			'protected_plugins'     => ( isset( $settings['protected_plugins'] ) && is_array( $settings['protected_plugins'] ) )
 				? $settings['protected_plugins']
 				: array(),
+			'notify_email'          => ! empty( $settings['notify_email'] ),
+			'notify_email_to'       => ( isset( $settings['notify_email_to'] ) && is_string( $settings['notify_email_to'] ) )
+				? $settings['notify_email_to']
+				: '',
+			'notify_webhook'        => ! empty( $settings['notify_webhook'] ),
+			'notify_webhook_url'    => ( isset( $settings['notify_webhook_url'] ) && is_string( $settings['notify_webhook_url'] ) )
+				? $settings['notify_webhook_url']
+				: '',
+			'notify_webhook_format' => ( isset( $settings['notify_webhook_format'] ) && in_array( $settings['notify_webhook_format'], array( 'json', 'slack' ), true ) )
+				? $settings['notify_webhook_format']
+				: 'json',
+			// A saved-but-empty array is a deliberate "notify about nothing" choice;
+			// only a missing/malformed value falls back to the defaults.
+			'notify_statuses'       => ( isset( $settings['notify_statuses'] ) && is_array( $settings['notify_statuses'] ) )
+				? array_values( array_intersect( $settings['notify_statuses'], $notify_statuses_default ) )
+				: $notify_statuses_default,
+			'notify_cooldown'       => ( isset( $settings['notify_cooldown'] ) && is_numeric( $settings['notify_cooldown'] ) )
+				? max( 60, min( 86400, (int) $settings['notify_cooldown'] ) )
+				: 900,
 		);
 	}
 
@@ -528,17 +579,479 @@ class FPAD_Fatal_Error_Handler {
 	}
 
 	/**
+	 * Send instant alerts (email/webhook) for a detected fatal, best effort.
+	 *
+	 * Runs after the error page has been rendered and flushed, so a slow or
+	 * broken transport can only delay the process, never the visitor. Wrapped in
+	 * its own Throwable guard: wp_mail()/wp_remote_post() execute third-party
+	 * hook code (SMTP plugins, HTTP filters) that may throw in the half-broken
+	 * request state after a fatal, and that must not skip handle()'s exit.
+	 * Alert strings built here are intentionally untranslated, like the page.
+	 *
+	 * @param array      $error         Error information.
+	 * @param array|null $plugin_result Outcome from maybe_deactivate_plugin(), or null.
+	 */
+	protected function maybe_notify( $error, $plugin_result ) {
+		try {
+			$this->send_alerts( $error, $plugin_result );
+		} catch ( Throwable $e ) {
+			// Alerting must never break the shutdown flow around it.
+		}
+	}
+
+	/**
+	 * The actual alert pipeline behind maybe_notify().
+	 *
+	 * The cooldown state is kept per fingerprint AND per channel: when one
+	 * channel sends directly while the other could only be queued (transports
+	 * load at different points in WordPress' boot), a single shared timestamp
+	 * would let the sent channel's stamp suppress the queued channel's delivery
+	 * forever on a persistently crashing site.
+	 *
+	 * @param array      $error         Error information.
+	 * @param array|null $plugin_result Outcome from maybe_deactivate_plugin(), or null.
+	 */
+	protected function send_alerts( $error, $plugin_result ) {
+		$settings = $this->get_settings();
+
+		$email_enabled   = ! empty( $settings['notify_email'] );
+		$webhook_enabled = ! empty( $settings['notify_webhook'] ) && '' !== $settings['notify_webhook_url'];
+
+		if ( ! $email_enabled && ! $webhook_enabled ) {
+			return;
+		}
+
+		$status = $plugin_result ? $plugin_result['status'] : 'unattributed';
+		if ( ! in_array( $status, $settings['notify_statuses'], true ) ) {
+			return;
+		}
+
+		// Rate-limit on the same identity the log uses to coalesce repeats, so one
+		// looping fatal cannot flood a channel.
+		$fingerprint = $this->log_fingerprint(
+			array(
+				'error_type' => isset( $error['type'] ) ? $error['type'] : '',
+				'error_file' => isset( $error['file'] ) ? $error['file'] : '',
+				'error_line' => isset( $error['line'] ) ? $error['line'] : '',
+				'error_msg'  => isset( $error['message'] ) ? $error['message'] : '',
+				'plugin'     => $plugin_result ? $plugin_result['plugin_base'] : '',
+				'status'     => $status,
+			)
+		);
+
+		$now   = time();
+		$state = array();
+		if ( function_exists( 'get_option' ) ) {
+			$state = get_option( 'fpad_alert_state', array() );
+			if ( ! is_array( $state ) ) {
+				$state = array();
+			}
+		}
+
+		$incident = ( isset( $state[ $fingerprint ] ) && is_array( $state[ $fingerprint ] ) )
+			? $state[ $fingerprint ]
+			: array();
+
+		$cooldown    = (int) $settings['notify_cooldown'];
+		$webhook_due = $webhook_enabled
+			&& ( ! isset( $incident['webhook'] ) || ( $now - (int) $incident['webhook'] ) >= $cooldown );
+		$email_due   = $email_enabled
+			&& ( ! isset( $incident['email'] ) || ( $now - (int) $incident['email'] ) >= $cooldown );
+
+		if ( ! $webhook_due && ! $email_due ) {
+			return;
+		}
+
+		$dirty = false;
+
+		if ( $webhook_due ) {
+			$payload = ( 'slack' === $settings['notify_webhook_format'] )
+				? $this->build_webhook_slack_payload( $error, $plugin_result, $status )
+				: $this->build_webhook_json_payload( $error, $plugin_result, $status );
+
+			$body = function_exists( 'wp_json_encode' )
+				? wp_json_encode( $payload )
+				//phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode
+				: json_encode( $payload );
+
+			if ( function_exists( 'wp_remote_post' ) ) {
+				// The attempt (not delivery proof) stamps the cooldown: a looping
+				// fatal must not retry a broken transport on every request.
+				$incident['webhook'] = $now;
+				$dirty               = true;
+				try {
+					// Non-blocking so a slow endpoint cannot hold the connection open.
+					wp_remote_post(
+						$settings['notify_webhook_url'],
+						$this->webhook_request_args( $settings['notify_webhook_url'], $body )
+					);
+				} catch ( Throwable $e ) {
+					// A hooked HTTP layer may throw mid-shutdown; the attempt counts.
+				}
+			} else {
+				// Transport not loaded yet (very early fatal): let FPAD_Notifier
+				// deliver it on the next normal request.
+				$this->queue_alert( 'webhook', $body, '', $fingerprint, $now );
+			}
+		}
+
+		if ( $email_due ) {
+			$subject = $this->build_alert_subject( $plugin_result, $status );
+			$message = $this->build_alert_email_body( $error, $plugin_result, $status );
+
+			if ( function_exists( 'wp_mail' ) ) {
+				$to = $this->alert_recipients( $settings );
+				if ( '' !== $to ) {
+					// Attempt-first stamping, same rationale as the webhook branch.
+					$incident['email'] = $now;
+					$dirty             = true;
+					try {
+						wp_mail( $to, $subject, $message );
+					} catch ( Throwable $e ) {
+						// An SMTP plugin's hook may throw mid-shutdown; the attempt counts.
+					}
+				}
+			} else {
+				$this->queue_alert( 'email', $message, $subject, $fingerprint, $now );
+			}
+		}
+
+		if ( $dirty && function_exists( 'update_option' ) ) {
+			// Prune stale fingerprints so the state option cannot grow unbounded.
+			foreach ( $state as $fp => $channels ) {
+				$latest = 0;
+				foreach ( (array) $channels as $ts ) {
+					$latest = max( $latest, (int) $ts );
+				}
+				if ( ( $now - $latest ) > 604800 ) { // Older than 7 days.
+					unset( $state[ $fp ] );
+				}
+			}
+			$state[ $fingerprint ] = $incident;
+			update_option( 'fpad_alert_state', $state, false );
+		}
+	}
+
+	/**
+	 * Arguments for an alert webhook POST, hardened for unattended use: never
+	 * follow redirects, and re-validate non-loopback URLs at request time
+	 * (reject_unsafe_urls) so a DNS change after save cannot re-point the
+	 * webhook at an internal host. Loopback targets skip that check because
+	 * wp_http_validate_url() always rejects them — they are an explicit,
+	 * documented local-development choice (mirrors the save-time rule in
+	 * FPAD_Admin::handle_settings_save()).
+	 *
+	 * @param string $url  Webhook URL.
+	 * @param string $body JSON request body.
+	 * @return array
+	 */
+	protected function webhook_request_args( $url, $body ) {
+		$host     = function_exists( 'wp_parse_url' )
+			? wp_parse_url( $url, PHP_URL_HOST )
+			//phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url
+			: parse_url( $url, PHP_URL_HOST );
+		$loopback = in_array( $host, array( 'localhost', '127.0.0.1' ), true );
+
+		return array(
+			'timeout'            => 3,
+			'blocking'           => false,
+			'redirection'        => 0,
+			'reject_unsafe_urls' => ! $loopback,
+			'body'               => $body,
+			'headers'            => array( 'Content-Type' => 'application/json' ),
+		);
+	}
+
+	/**
+	 * Queue an alert whose transport function was unavailable at shutdown, for
+	 * FPAD_Notifier to deliver on a later, fully-loaded request.
+	 *
+	 * @param string $channel     'email' or 'webhook'.
+	 * @param string $payload     Rendered payload (email body / webhook JSON body).
+	 * @param string $subject     Email subject ('' for webhook items).
+	 * @param string $fingerprint Alert fingerprint, for the drain's cooldown re-check.
+	 * @param int    $now         Current timestamp.
+	 */
+	protected function queue_alert( $channel, $payload, $subject, $fingerprint, $now ) {
+		if ( ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
+			return;
+		}
+
+		$queue = get_option( 'fpad_alert_queue', array() );
+		if ( ! is_array( $queue ) ) {
+			$queue = array();
+		}
+
+		// A looping early fatal must not fill the queue with copies of itself and
+		// evict other pending alerts.
+		foreach ( $queue as $item ) {
+			if ( is_array( $item )
+				&& isset( $item['channel'], $item['fingerprint'] )
+				&& $channel === $item['channel']
+				&& $fingerprint === $item['fingerprint'] ) {
+				return;
+			}
+		}
+
+		$entry = array(
+			'channel' => $channel,
+			'payload' => $payload,
+		);
+		if ( 'email' === $channel ) {
+			$entry['subject'] = $subject;
+		}
+		$entry['fingerprint'] = $fingerprint;
+		$entry['time']        = $now;
+
+		$queue[] = $entry;
+		if ( count( $queue ) > 20 ) {
+			$queue = array_slice( $queue, -20 );
+		}
+
+		update_option( 'fpad_alert_queue', $queue, false );
+	}
+
+	/**
+	 * Resolve the alert email recipients: configured list, or the admin email.
+	 *
+	 * @param array $settings Normalized settings from get_settings().
+	 * @return string Comma-separated recipients, or '' when none can be resolved.
+	 */
+	protected function alert_recipients( $settings ) {
+		if ( '' !== $settings['notify_email_to'] ) {
+			return $settings['notify_email_to'];
+		}
+
+		return function_exists( 'get_option' ) ? (string) get_option( 'admin_email' ) : '';
+	}
+
+	/**
+	 * Alert email subject: "[{site_name}] Fatal error: {plugin|unattributed} {verb}".
+	 *
+	 * @param array|null $plugin_result Outcome from maybe_deactivate_plugin(), or null.
+	 * @param string     $status        Outcome status.
+	 * @return string
+	 */
+	protected function build_alert_subject( $plugin_result, $status ) {
+		$site_name   = function_exists( 'get_bloginfo' ) ? get_bloginfo( 'name' ) : '';
+		$plugin_name = ( $plugin_result && '' !== $plugin_result['plugin_name'] )
+			? $plugin_result['plugin_name']
+			: 'unattributed';
+
+		return '[' . $site_name . '] Fatal error: ' . $plugin_name . ' ' . $this->status_verb( $status );
+	}
+
+	/**
+	 * Plain-text alert email body.
+	 *
+	 * Field order mirrors FPAD_Admin::build_report() (sync pair): the handler
+	 * cannot call the admin class at shutdown, so the layout is duplicated here,
+	 * plus the log-page link required for alerts.
+	 *
+	 * @param array      $error         Error information.
+	 * @param array|null $plugin_result Outcome from maybe_deactivate_plugin(), or null.
+	 * @param string     $status        Outcome status.
+	 * @return string
+	 */
+	protected function build_alert_email_body( $error, $plugin_result, $status ) {
+		$plugin_base = $plugin_result ? $plugin_result['plugin_base'] : '';
+		$plugin_name = $plugin_result ? $plugin_result['plugin_name'] : '';
+
+		$lines   = array();
+		$lines[] = 'Plugin: ' . ( '' !== $plugin_name ? $plugin_name : 'n/a' )
+			. ( '' !== $plugin_base ? ' (' . $plugin_base . ')' : '' );
+		$lines[] = 'Status: ' . $status;
+		$lines[] = 'Source: ' . $this->detect_error_source( $error );
+		$lines[] = 'Error: ' . $this->error_type_name( isset( $error['type'] ) ? $error['type'] : 0 )
+			. ': ' . ( isset( $error['message'] ) ? $error['message'] : '' );
+		$lines[] = 'File: ' . ( isset( $error['file'] ) ? $error['file'] : '' )
+			. ':' . ( isset( $error['line'] ) ? $error['line'] : '' );
+
+		$request_uri = $this->current_request_uri();
+		if ( '' !== $request_uri ) {
+			$lines[] = 'Request: ' . $request_uri;
+		}
+
+		$env = array( 'PHP ' . PHP_VERSION );
+		if ( ! empty( $GLOBALS['wp_version'] ) ) {
+			$env[] = 'WP ' . $GLOBALS['wp_version'];
+		}
+		$lines[] = 'Environment: ' . implode( ', ', $env );
+
+		$log_url = '';
+		if ( function_exists( 'admin_url' ) ) {
+			$log_url = admin_url( 'tools.php?page=fpad-log' );
+		} elseif ( '' !== $this->alert_site_url() ) {
+			$log_url = $this->alert_site_url() . '/wp-admin/tools.php?page=fpad-log';
+		}
+		if ( '' !== $log_url ) {
+			$lines[] = '';
+			$lines[] = 'Log: ' . $log_url;
+		}
+
+		return implode( "\n", $lines );
+	}
+
+	/**
+	 * Webhook payload, generic JSON format (schema per the alerts PRD, FR-4).
+	 *
+	 * @param array      $error         Error information.
+	 * @param array|null $plugin_result Outcome from maybe_deactivate_plugin(), or null.
+	 * @param string     $status        Outcome status.
+	 * @return array
+	 */
+	protected function build_webhook_json_payload( $error, $plugin_result, $status ) {
+		return array(
+			'event'        => 'fpad.fatal_error',
+			'site_url'     => $this->alert_site_url(),
+			'status'       => $status,
+			'deactivated'  => $plugin_result ? ! empty( $plugin_result['deactivated'] ) : false,
+			'plugin'       => $plugin_result ? $plugin_result['plugin_base'] : '',
+			'plugin_name'  => $plugin_result ? $plugin_result['plugin_name'] : '',
+			'error'        => array(
+				'type'    => $this->error_type_name( isset( $error['type'] ) ? $error['type'] : 0 ),
+				'message' => isset( $error['message'] ) ? (string) $error['message'] : '',
+				'file'    => isset( $error['file'] ) ? (string) $error['file'] : '',
+				'line'    => isset( $error['line'] ) ? (int) $error['line'] : 0,
+			),
+			'request_uri'  => $this->current_request_uri(),
+			'php_version'  => PHP_VERSION,
+			'wp_version'   => isset( $GLOBALS['wp_version'] ) ? (string) $GLOBALS['wp_version'] : '',
+			'occurred_at'  => time(),
+			'fpad_version' => defined( 'FPAD_VERSION' ) ? FPAD_VERSION : '',
+		);
+	}
+
+	/**
+	 * Webhook payload, Slack-compatible format.
+	 *
+	 * Severity: 🟠 when the site self-healed (plugin deactivated), 🔴 when it is
+	 * likely still broken (protected/log_only/unavailable/unattributed).
+	 *
+	 * @param array      $error         Error information.
+	 * @param array|null $plugin_result Outcome from maybe_deactivate_plugin(), or null.
+	 * @param string     $status        Outcome status.
+	 * @return array
+	 */
+	protected function build_webhook_slack_payload( $error, $plugin_result, $status ) {
+		$emoji = ( 'deactivated' === $status ) ? '🟠' : '🔴';
+		$site  = preg_replace( '#^https?://#', '', $this->alert_site_url() );
+
+		$plugin_name = $plugin_result ? $plugin_result['plugin_name'] : '';
+
+		switch ( $status ) {
+			case 'deactivated':
+				$action = 'automatically deactivated';
+				break;
+			case 'protected':
+				$action = 'NOT deactivated (protected)';
+				break;
+			case 'log_only':
+				$action = 'logged only';
+				break;
+			default:
+				$action = 'could not be deactivated';
+				break;
+		}
+
+		if ( '' !== $plugin_name ) {
+			$headline = $emoji . ' ' . $site . ': Fatal error in ' . $plugin_name . ' — ' . $action . '.';
+		} else {
+			$headline = $emoji . ' ' . $site . ': Fatal error — could not be attributed to a plugin.';
+		}
+
+		$detail = $this->error_type_name( isset( $error['type'] ) ? $error['type'] : 0 )
+			. ': ' . ( isset( $error['message'] ) ? $error['message'] : '' )
+			. ' in ' . ( isset( $error['file'] ) ? $error['file'] : '' )
+			. ':' . ( isset( $error['line'] ) ? $error['line'] : '' );
+
+		return array( 'text' => $headline . "\n" . $detail );
+	}
+
+	/**
+	 * Human-facing verb for an outcome status, used in the alert subject.
+	 *
+	 * @param string $status Outcome status.
+	 * @return string
+	 */
+	protected function status_verb( $status ) {
+		switch ( $status ) {
+			case 'deactivated':
+				return 'deactivated';
+			case 'protected':
+				return 'NOT deactivated (protected)';
+			case 'unavailable':
+				return 'could not be deactivated';
+		}
+
+		// log_only and unattributed fatals were recorded but nothing was disabled.
+		return 'logged only';
+	}
+
+	/**
+	 * PHP error-type constant name (e.g. "E_ERROR") for alert payloads.
+	 *
+	 * @param int $type PHP error type constant value.
+	 * @return string
+	 */
+	protected function error_type_name( $type ) {
+		switch ( $type ) {
+			case E_ERROR:
+				return 'E_ERROR';
+			case E_PARSE:
+				return 'E_PARSE';
+			case E_CORE_ERROR:
+				return 'E_CORE_ERROR';
+			case E_COMPILE_ERROR:
+				return 'E_COMPILE_ERROR';
+			case E_USER_ERROR:
+				return 'E_USER_ERROR';
+			case E_RECOVERABLE_ERROR:
+				return 'E_RECOVERABLE_ERROR';
+		}
+
+		return 'E_UNKNOWN';
+	}
+
+	/**
+	 * Best-effort site URL for alert payloads: home_url() when available, a
+	 * scheme + HTTP_HOST fallback otherwise, '' as a last resort.
+	 *
+	 * @return string
+	 */
+	protected function alert_site_url() {
+		if ( function_exists( 'home_url' ) ) {
+			return home_url();
+		}
+
+		if ( ! empty( $_SERVER['HTTP_HOST'] ) ) {
+			$scheme = ( isset( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ) ? 'https' : 'http';
+			// The Host header is request-controlled; keep only characters a URL
+			// host can legally contain.
+			$host = preg_replace( '/[^A-Za-z0-9\.\-\:\[\]]/', '', (string) $_SERVER['HTTP_HOST'] );
+
+			return $scheme . '://' . $host;
+		}
+
+		return '';
+	}
+
+	/**
 	 * Display a custom error page with warning and reload button
+	 *
+	 * Renders and flushes the page but does NOT exit — handle() exits after the
+	 * post-page work (alert sends) so those can never delay the visitor.
 	 *
 	 * @param array      $error         Error information
 	 * @param array|null $plugin_result Outcome from maybe_deactivate_plugin(), or null
+	 * @return bool Whether the page was rendered (false when headers were already sent)
 	 */
 	protected function display_custom_error_page( $error, $plugin_result ) {
 		// If output already started (common in shutdown), don't append a broken page
 		// mid-stream or trigger "headers already sent" warnings — leave the partial
 		// response as-is, mirroring WordPress core's own fatal handler guard.
 		if ( headers_sent() ) {
-			return;
+			return false;
 		}
 
 		// Set the HTTP status code
@@ -761,6 +1274,27 @@ class FPAD_Fatal_Error_Handler {
 			</div>
 		</body>
 		</html>';
-		exit;
+
+		// Push the page to the client now, so the alert sends that follow happen
+		// on an already-delivered response.
+		if ( function_exists( 'wp_ob_end_flush_all' ) ) {
+			wp_ob_end_flush_all();
+		} else {
+			$level = ob_get_level();
+			while ( $level > 0 ) {
+				//phpcs:ignore Generic.PHP.NoSilencedErrors.Discouraged, WordPress.PHP.NoSilencedErrors.Discouraged
+				if ( ! @ob_end_flush() ) {
+					break;
+				}
+				$new_level = ob_get_level();
+				if ( $new_level >= $level ) {
+					break; // A non-removable buffer; stop rather than loop.
+				}
+				$level = $new_level;
+			}
+		}
+		flush();
+
+		return true;
 	}
 }

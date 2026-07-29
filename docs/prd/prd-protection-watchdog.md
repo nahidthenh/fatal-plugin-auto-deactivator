@@ -107,3 +107,9 @@ feature-map.md (new rows + sync pair: drop-in path computation mirror), referenc
 
 - **Risk:** two FPAD-like plugins reclaim-looping — mitigated by FR-3 back-off.
 - **Open:** interval setting (fixed hourly vs configurable)? Proposed: fixed hourly for v1; add a filter `fpad_watchdog_interval` (this would be the plugin's first public filter — document it in reference.md "hooks provided").
+
+## 11. Implementation notes — as shipped in 1.5.0
+
+- The state option gained `last_reclaim`, `last_alert_status`, and `last_recovery_alert`: the 24 h foreign-reclaim back-off decays on a timer instead of resetting on recovery (a reset would re-arm an hourly reclaim loop against a competing plugin), and the lost-alert throttle deliberately survives recoveries — combined with a once-per-24h gate on restored alerts, a flapping drop-in produces at most one lost + one restored alert per day instead of hourly ping-pong.
+- `send_watchdog_alert()` delegates entirely to `FPAD_Notifier::dispatch_event()`, passing the translated subject via `$data['subject']`; the notifier owns the no-channel `wp_mail` fallback and appends the log-page link. The PRD's standalone `wp_mail` branch proved to be dead code (the notifier class is always loaded).
+- Both cron events self-heal from `activate()` and `check_dropin()`; `fpad_watchdog_state` is stored with `autoload=false`.

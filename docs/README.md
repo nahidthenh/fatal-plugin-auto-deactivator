@@ -42,5 +42,5 @@ It works out of the box with no required configuration. Optional settings (since
 - **Requirements:** WordPress ≥ 5.3, PHP ≥ 7.0 — all code must stay PHP 7.0 compatible
 - **License:** GPL-2.0+
 - **Stack:** plain PHP, no build step, no runtime dependencies, no custom DB tables, no test suite (manual testing — see development.md)
-- **Surface:** no REST endpoints, no AJAX, no cron, no public hooks for third parties
+- **Surface:** no REST endpoints, no AJAX; two cron events (protection watchdog, alert-queue drain) and one public filter (`fpad_watchdog_interval`) since 1.5.0
 - **Branches:** `dev` (development) → `master` (release); releases deploy to WP.org SVN on tag push

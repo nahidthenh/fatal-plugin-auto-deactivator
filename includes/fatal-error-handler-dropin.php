@@ -20,6 +20,10 @@ if ( ! defined( 'FPAD_PLUGIN_DIR' ) ) {
 	define( 'FPAD_PLUGIN_DIR', dirname( __FILE__ ) . '/plugins/fatal-plugin-auto-deactivator/' );
 }
 
+// Reserve a memory buffer the handler frees on entry, so logging and alerts
+// still work when the fatal is an out-of-memory error.
+$GLOBALS['fpad_reserved_memory'] = str_repeat( 'x', 256 * 1024 );
+
 // Include the fatal error handler class
 if ( ! class_exists( 'FPAD_Fatal_Error_Handler' ) ) {
 	require_once FPAD_PLUGIN_DIR . 'includes/class-fatal-error-handler.php';
