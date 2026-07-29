@@ -31,5 +31,9 @@ if ( ! class_exists( 'FPAD_Fatal_Error_Handler' ) ) {
 
 define( 'QM_DISABLE_ERROR_HANDLER', true );
 
+// fpad-dropin-version: 2 — bump this token (here AND in the generator inside
+// class-dropin-manager.php) whenever the drop-in's contents change, so deploy
+// paths that never fire the upgrader hook still get their stale copy refreshed.
+
 // Return an instance of our custom error handler
 return new FPAD_Fatal_Error_Handler();

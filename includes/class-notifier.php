@@ -38,6 +38,25 @@ class FPAD_Notifier {
 			return;
 		}
 
+		// Failure retries are reserved for the hourly cron backstop: the on-init
+		// drain only attempts fresh items, so a permanently failing transport
+		// (e.g. a broken SMTP relay with a long timeout) cannot hang every page
+		// load. Skip early — before any lock churn — when there is nothing this
+		// drain is allowed to attempt.
+		$is_backstop = doing_action( 'fpad_notifier_drain' );
+		if ( ! $is_backstop ) {
+			$has_fresh = false;
+			foreach ( $queue as $item ) {
+				if ( is_array( $item ) && empty( $item['attempts'] ) ) {
+					$has_fresh = true;
+					break;
+				}
+			}
+			if ( ! $has_fresh ) {
+				return;
+			}
+		}
+
 		// Best-effort concurrency guard: two simultaneous requests (or init plus
 		// the cron backstop) must not double-send the same queued alerts.
 		if ( get_transient( 'fpad_notifier_lock' ) ) {
@@ -46,7 +65,7 @@ class FPAD_Notifier {
 		set_transient( 'fpad_notifier_lock', 1, 60 );
 
 		try {
-			self::process_queue( $queue );
+			self::process_queue( $queue, $is_backstop );
 		} catch ( Throwable $e ) {
 			// A failed drain must never break a normal request; retry next run.
 		}
@@ -167,7 +186,7 @@ class FPAD_Notifier {
 			$subject = ( is_array( $data ) && ! empty( $data['subject'] ) )
 				? (string) $data['subject']
 				: '[' . get_bloginfo( 'name' ) . '] ' . self::event_label( $event );
-			$body    = $message . "\n\n" . 'Log: ' . admin_url( 'tools.php?page=fpad-log' );
+			$body    = $message . "\n\n" . __( 'Log:', 'fatal-plugin-auto-deactivator' ) . ' ' . admin_url( 'tools.php?page=fpad-log' );
 
 			if ( $email_enabled ) {
 				$to = self::recipients( $settings );
@@ -217,9 +236,11 @@ class FPAD_Notifier {
 	/**
 	 * Deliver each queued item, honoring the alert state, then persist leftovers.
 	 *
-	 * @param array $queue Queue entries from the fpad_alert_queue option.
+	 * @param array $queue       Queue entries from the fpad_alert_queue option.
+	 * @param bool  $is_backstop Whether this drain is the hourly cron (the only
+	 *                           context allowed to retry previously failed items).
 	 */
-	private static function process_queue( $queue ) {
+	private static function process_queue( $queue, $is_backstop ) {
 		$settings = FPAD_Admin::get_settings();
 
 		$state = get_option( 'fpad_alert_state', array() );
@@ -253,6 +274,20 @@ class FPAD_Notifier {
 			$channel     = (string) $item['channel'];
 			$fingerprint = isset( $item['fingerprint'] ) ? (string) $item['fingerprint'] : '';
 			$item_time   = isset( $item['time'] ) ? (int) $item['time'] : 0;
+			$attempts    = isset( $item['attempts'] ) ? (int) $item['attempts'] : 0;
+
+			// Expire undeliverable items instead of retrying forever: after 24 h
+			// or 5 failed attempts the alert is stale anyway (the incident is in
+			// the log) and each retry costs a transport timeout.
+			if ( $attempts >= 5 || ( $item_time && ( time() - $item_time ) > DAY_IN_SECONDS ) ) {
+				continue;
+			}
+
+			// Previously failed items wait for the hourly cron backstop.
+			if ( $attempts > 0 && ! $is_backstop ) {
+				$remaining[] = $item;
+				continue;
+			}
 
 			// Cooldown re-check, per channel: only a LATER send on this item's own
 			// channel makes the queued copy redundant. A sibling channel's direct
@@ -267,24 +302,32 @@ class FPAD_Notifier {
 
 			$sent = false;
 
-			if ( 'email' === $channel && ! empty( $settings['notify_email'] ) ) {
-				$to = self::recipients( $settings );
-				if ( '' !== $to ) {
-					$sent = wp_mail(
-						$to,
-						isset( $item['subject'] ) ? (string) $item['subject'] : '',
-						isset( $item['payload'] ) ? (string) $item['payload'] : ''
+			// Per-item guard: a transport that THROWS (an SMTP plugin's hook, an
+			// HTTP filter) counts as a failed attempt but must not abort the
+			// batch — otherwise items already sent above would never be removed
+			// and would duplicate on the next drain.
+			try {
+				if ( 'email' === $channel && ! empty( $settings['notify_email'] ) ) {
+					$to = self::recipients( $settings );
+					if ( '' !== $to ) {
+						$sent = wp_mail(
+							$to,
+							isset( $item['subject'] ) ? (string) $item['subject'] : '',
+							isset( $item['payload'] ) ? (string) $item['payload'] : ''
+						);
+					}
+				} elseif ( 'webhook' === $channel && ! empty( $settings['notify_webhook'] ) && '' !== $settings['notify_webhook_url'] ) {
+					$response = wp_remote_post(
+						$settings['notify_webhook_url'],
+						self::webhook_args( $settings['notify_webhook_url'], isset( $item['payload'] ) ? (string) $item['payload'] : '', false, 3 )
 					);
+					$sent = ! is_wp_error( $response );
+				} else {
+					// The channel was disabled after the item was queued: drop it.
+					continue;
 				}
-			} elseif ( 'webhook' === $channel && ! empty( $settings['notify_webhook'] ) && '' !== $settings['notify_webhook_url'] ) {
-				$response = wp_remote_post(
-					$settings['notify_webhook_url'],
-					self::webhook_args( $settings['notify_webhook_url'], isset( $item['payload'] ) ? (string) $item['payload'] : '', false, 3 )
-				);
-				$sent = ! is_wp_error( $response );
-			} else {
-				// The channel was disabled after the item was queued: drop it.
-				continue;
+			} catch ( Throwable $e ) {
+				$sent = false;
 			}
 
 			if ( $sent ) {
@@ -296,8 +339,9 @@ class FPAD_Notifier {
 					$state_dirty                       = true;
 				}
 			} else {
-				// Transport failed; keep the item for the hourly backstop.
-				$remaining[] = $item;
+				// Failed attempt: count it and leave the retry to the cron backstop.
+				$item['attempts'] = $attempts + 1;
+				$remaining[]      = $item;
 			}
 		}
 

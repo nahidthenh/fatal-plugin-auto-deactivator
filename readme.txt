@@ -91,7 +91,7 @@ Yes. An admin notice is displayed in your WordPress dashboard showing which plug
 
 = What exactly do alert emails and webhooks contain? =
 
-The same details as the log entry: plugin name, outcome status, error type/message, file and line, the request URL, and PHP/WordPress versions. That includes server file paths, so point alerts only at inboxes and endpoints you control. Webhook URLs must use https:// (plain http:// is allowed only for localhost). If a fatal happens so early that WordPress cannot send mail or HTTP requests yet, the alert is queued and delivered on the next normal page load.
+Emails and generic JSON webhooks carry the same details as the log entry: plugin name, outcome status, error type/message, file and line, the request URL, and PHP/WordPress versions. The Slack-compatible format is a compact summary — plugin, action taken, error, and file:line. That includes server file paths, so point alerts only at inboxes and endpoints you control. Webhook URLs must use https:// (plain http:// is allowed only for localhost). If a fatal happens so early that WordPress cannot send mail or HTTP requests yet, the alert is queued and delivered on the next normal page load.
 
 = Can I reactivate a deactivated plugin? =
 
@@ -154,7 +154,7 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 
 == Changelog ==
 
-= 1.5.0 - 28/07/2026 =
+= 1.5.0 - 29/07/2026 =
 - Added: Instant alerts — get an email and/or webhook (generic JSON or Slack-compatible) the moment a fatal error is detected, saying which plugin was involved and what action was taken; identical repeats are rate-limited by a configurable cooldown, and alerts that fire too early for WordPress to deliver are queued and sent on the next page load
 - Added: "Send test email" / "Send test webhook" buttons on the Settings tab
 - Added: Protection watchdog — an hourly background check that re-verifies the protection drop-in, silently reinstalls it when missing, reclaims it once if another plugin overwrote it, and alerts you when protection is lost or restored

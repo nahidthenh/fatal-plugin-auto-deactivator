@@ -35,6 +35,7 @@ phpcs.xml
 .phpcs.xml.dist
 phpcs.xml.dist
 README.md
+RELEASE_NOTES.md
 webpack.config.js
 wp-cli.local.yml
 yarn.lock

@@ -476,20 +476,7 @@ class FPAD_Fatal_Error_Handler {
 
 		$now = time();
 
-		// Keep the stored message bounded so a single huge message can't bloat the
-		// option. Cut on a character boundary so a multibyte UTF-8 sequence isn't split.
-		$message = isset( $error['message'] ) ? (string) $error['message'] : '';
-		if ( strlen( $message ) > 2000 ) {
-			if ( function_exists( 'mb_substr' ) ) {
-				$message = mb_substr( $message, 0, 2000, 'UTF-8' );
-			} else {
-				$message = substr( $message, 0, 2000 );
-				// Drop a trailing partial multibyte sequence left by the byte-wise cut.
-				$message = preg_replace( '/[\xC0-\xFF][\x80-\xBF]*$/', '', $message );
-				$message = preg_replace( '/[\x80-\xBF]+$/', '', $message );
-			}
-			$message .= '…';
-		}
+		$message = $this->cap_error_message( isset( $error['message'] ) ? (string) $error['message'] : '' );
 
 		// Create a new log entry. The extra context (request URL, PHP/WP version) is
 		// read from constants/superglobals only, so it stays shutdown-safe.
@@ -534,6 +521,32 @@ class FPAD_Fatal_Error_Handler {
 
 		// Update the log
 		update_option( 'fpad_deactivation_log', $deactivation_log );
+	}
+
+	/**
+	 * Bound an error message so no consumer can bloat storage or payloads.
+	 *
+	 * Used by both the log writer and the alert pipeline, so the two stay
+	 * consistent and their fingerprints agree. Cut on a character boundary so a
+	 * multibyte UTF-8 sequence isn't split.
+	 *
+	 * @param string $message Raw error message.
+	 * @return string Message capped at 2000 characters.
+	 */
+	protected function cap_error_message( $message ) {
+		if ( strlen( $message ) > 2000 ) {
+			if ( function_exists( 'mb_substr' ) ) {
+				$message = mb_substr( $message, 0, 2000, 'UTF-8' );
+			} else {
+				$message = substr( $message, 0, 2000 );
+				// Drop a trailing partial multibyte sequence left by the byte-wise cut.
+				$message = preg_replace( '/[\xC0-\xFF][\x80-\xBF]*$/', '', $message );
+				$message = preg_replace( '/[\x80-\xBF]+$/', '', $message );
+			}
+			$message .= '…';
+		}
+
+		return $message;
 	}
 
 	/**
@@ -625,6 +638,11 @@ class FPAD_Fatal_Error_Handler {
 		if ( ! in_array( $status, $settings['notify_statuses'], true ) ) {
 			return;
 		}
+
+		// Bound the message exactly like the log does (shared cap_error_message),
+		// so queue rows, emails, and webhook bodies cannot bloat — and so the
+		// alert fingerprint below matches the log's for the same fatal.
+		$error['message'] = $this->cap_error_message( isset( $error['message'] ) ? (string) $error['message'] : '' );
 
 		// Rate-limit on the same identity the log uses to coalesce repeats, so one
 		// looping fatal cannot flood a channel.
@@ -1027,7 +1045,9 @@ class FPAD_Fatal_Error_Handler {
 		if ( ! empty( $_SERVER['HTTP_HOST'] ) ) {
 			$scheme = ( isset( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ) ? 'https' : 'http';
 			// The Host header is request-controlled; keep only characters a URL
-			// host can legally contain.
+			// host can legally contain (the whitelist regex is the sanitizer, and
+			// it strips backslashes, which is all unslashing would do here).
+			//phpcs:ignore WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 			$host = preg_replace( '/[^A-Za-z0-9\.\-\:\[\]]/', '', (string) $_SERVER['HTTP_HOST'] );
 
 			return $scheme . '://' . $host;

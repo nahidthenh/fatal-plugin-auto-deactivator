@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-07-29T06:01:44+00:00\n"
+"POT-Creation-Date: 2026-07-29T06:45:34+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: fatal-plugin-auto-deactivator\n"
@@ -383,32 +383,32 @@ msgid "Settings saved."
 msgstr ""
 
 #: includes/class-admin.php:1106
-#: includes/class-plugin-lifecycle.php:298
+#: includes/class-plugin-lifecycle.php:319
 msgid "Another plugin currently owns wp-content/fatal-error-handler.php, so Fatal Plugin Auto Deactivator is not protecting your site."
 msgstr ""
 
 #: includes/class-admin.php:1108
-#: includes/class-plugin-lifecycle.php:300
+#: includes/class-plugin-lifecycle.php:321
 msgid "Your wp-content directory is not writable, so the protection file could not be installed. Check file permissions."
 msgstr ""
 
 #: includes/class-admin.php:1110
-#: includes/class-plugin-lifecycle.php:302
+#: includes/class-plugin-lifecycle.php:323
 msgid "WordPress could not access the filesystem (credentials may be required), so the protection file could not be installed."
 msgstr ""
 
 #: includes/class-admin.php:1112
-#: includes/class-plugin-lifecycle.php:304
+#: includes/class-plugin-lifecycle.php:325
 msgid "The protection file is not installed, so your site is not currently protected."
 msgstr ""
 
 #: includes/class-admin.php:1114
-#: includes/class-plugin-lifecycle.php:306
+#: includes/class-plugin-lifecycle.php:327
 msgid "The WP_DISABLE_FATAL_ERROR_HANDLER constant is enabled (usually in wp-config.php), so WordPress never runs any fatal error handler and Fatal Plugin Auto Deactivator cannot protect your site. Remove that constant to restore protection."
 msgstr ""
 
 #: includes/class-admin.php:1116
-#: includes/class-plugin-lifecycle.php:308
+#: includes/class-plugin-lifecycle.php:329
 msgid "The protection file is installed but points at nothing: the plugin folder appears to have been moved or renamed, so wp-content/plugins/fatal-plugin-auto-deactivator no longer contains the handler it tries to load. Restore the plugin to that folder to fix protection."
 msgstr ""
 
@@ -497,52 +497,56 @@ msgstr ""
 msgid "Protection last verified"
 msgstr ""
 
-#: includes/class-notifier.php:74
+#: includes/class-notifier.php:93
 msgid "No recipient address is configured."
 msgstr ""
 
-#: includes/class-notifier.php:78
+#: includes/class-notifier.php:97
 msgid "Test notification from Fatal Plugin Auto Deactivator"
 msgstr ""
 
-#: includes/class-notifier.php:79
+#: includes/class-notifier.php:98
 msgid "This is a test notification. Fatal error alerts from this site will look similar to this email."
 msgstr ""
 
-#: includes/class-notifier.php:85
+#: includes/class-notifier.php:104
 msgid "Email accepted for delivery."
 msgstr ""
 
-#: includes/class-notifier.php:91
+#: includes/class-notifier.php:110
 msgid "wp_mail() could not send the message. Check your mail configuration."
 msgstr ""
 
-#: includes/class-notifier.php:100
+#: includes/class-notifier.php:119
 msgid "No webhook URL is configured."
 msgstr ""
 
-#: includes/class-notifier.php:139
+#: includes/class-notifier.php:158
 msgid "Unknown notification channel."
 msgstr ""
 
-#: includes/class-plugin-lifecycle.php:257
+#: includes/class-notifier.php:189
+msgid "Log:"
+msgstr ""
+
+#: includes/class-plugin-lifecycle.php:278
 msgid "Fatal error protection has been restored — the fatal error handler drop-in is installed and working again."
 msgstr ""
 
 #. translators: %s: site name
-#: includes/class-plugin-lifecycle.php:259
+#: includes/class-plugin-lifecycle.php:280
 #, php-format
 msgid "[%s] Fatal error protection restored"
 msgstr ""
 
 #. translators: %s: site name
-#: includes/class-plugin-lifecycle.php:263
+#: includes/class-plugin-lifecycle.php:284
 #, php-format
 msgid "[%s] Fatal error protection is not active"
 msgstr ""
 
 #. translators: %s: internal protection status keyword
-#: includes/class-plugin-lifecycle.php:312
+#: includes/class-plugin-lifecycle.php:333
 #, php-format
 msgid "Fatal error protection is not active (status: %s)."
 msgstr ""

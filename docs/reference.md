@@ -96,7 +96,7 @@ Read in the shutdown handler via the guarded `FPAD_Fatal_Error_Handler::get_sett
 
 ### `fpad_alert_queue` — pending alerts (since 1.5.0)
 
-Alerts whose transport function (`wp_mail`/`wp_remote_post`) did not exist at shutdown (very early fatals). Entries: `array( 'channel' => 'email'|'webhook', 'payload' => string, 'subject' => string (email only), 'fingerprint' => string, 'time' => int )`. Cap 20, oldest dropped; duplicate fingerprint+channel not re-queued; `autoload=false`. Drained by `FPAD_Notifier::drain_queue()` on `init` (priority 20) and the hourly `fpad_notifier_drain` cron, under the `fpad_notifier_lock` transient. Supersession is judged against a **snapshot of the state as it was before the drain, per channel**: an item is skipped only when its *own* channel recorded a send newer than the item (a sibling channel's direct send, or an item delivered earlier in the same drain, never suppresses it). The final queue write **merges** in any entries appended by a concurrently crashing request during the drain. The drain cron is scheduled lazily on the settings save that enables a channel and self-healed from `activate()`/`check_dropin()` (settings survive deactivation; the cron does not).
+Alerts whose transport function (`wp_mail`/`wp_remote_post`) did not exist at shutdown (very early fatals). Entries: `array( 'channel' => 'email'|'webhook', 'payload' => string, 'subject' => string (email only), 'fingerprint' => string, 'time' => int, 'attempts' => int (added on first delivery failure) )`. Cap 20, oldest dropped; duplicate fingerprint+channel not re-queued; `autoload=false`. **Retry policy:** fresh items (`attempts` 0/absent) are attempted by the `init` drain; failed items are retried only by the hourly cron backstop, each transport wrapped in its own try/catch so one throwing send cannot abort the batch, and items expire after 5 failed attempts or 24 h — a permanently broken transport can never hang every page load. Drained by `FPAD_Notifier::drain_queue()` on `init` (priority 20) and the hourly `fpad_notifier_drain` cron, under the `fpad_notifier_lock` transient. Supersession is judged against a **snapshot of the state as it was before the drain, per channel**: an item is skipped only when its *own* channel recorded a send newer than the item (a sibling channel's direct send, or an item delivered earlier in the same drain, never suppresses it). The final queue write **merges** in any entries appended by a concurrently crashing request during the drain. The drain cron is scheduled lazily on the settings save that enables a channel and self-healed from `activate()`/`check_dropin()` (settings survive deactivation; the cron does not).
 
 ### `fpad_watchdog_state` — protection watchdog state (since 1.5.0)
 
@@ -116,7 +116,8 @@ All six options are deleted in `FPAD_Plugin_Lifecycle::uninstall()`.
 |------|----------|---------|
 | `plugins_loaded` | `FPAD_Utils::load_textdomain` | i18n |
 | `upgrader_process_complete` | `FPAD_Utils::plugin_upgrade_hook` | Refresh drop-in after self-update |
-| `init` (prio 20) | `FPAD_Notifier::drain_queue` | Deliver alerts queued during early fatals (since 1.5.0) |
+| `init` (prio 10) | `FPAD_Plugin_Lifecycle::ensure_scheduled` | Cron self-heal reachable from front-end traffic (auto-updated unattended sites never see `admin_init`) (since 1.5.0) |
+| `init` (prio 20) | `FPAD_Notifier::drain_queue` | Deliver alerts queued during early fatals; fresh items only — failure retries wait for the cron backstop (since 1.5.0) |
 | `fpad_notifier_drain` (cron, hourly) | `FPAD_Notifier::drain_queue` | Drain backstop for front-end-only traffic; scheduled lazily when a channel is enabled, unscheduled when both disabled (since 1.5.0) |
 | `fpad_watchdog_check` (cron, hourly) | `FPAD_Plugin_Lifecycle::watchdog_check` | Verify/heal protection; scheduled on activation + self-scheduled from `check_dropin()` (since 1.5.0) |
 | `admin_init` | `FPAD_Plugin_Lifecycle::check_dropin` | Self-heal missing drop-in |
@@ -194,6 +195,7 @@ Instantiated by the drop-in; all WP calls guarded for partial-load context.
 | `remove_dropin()` | Deletes the drop-in only if owned (`dropin_is_ours()`) |
 | `is_dropin_installed()` | File exists **and** owned |
 | `get_status()` | Returns `active` / `foreign` / `missing` / `unwritable` / `no_filesystem` for admin surfacing |
+| `refresh_if_stale()` | (1.5.0) Reinstalls our own drop-in when its content lacks `DROPIN_VERSION_TOKEN` (`fpad-dropin-version: 2`) — covers git/rsync/Composer deploys that never fire the upgrader hook; called from `check_dropin()` and `watchdog_check()`. Bump the token (tracked source + generator heredoc, sync pair) whenever drop-in contents change |
 | `verify_protection()` | (1.5.0) End-to-end check: `array( 'status', 'detail' )`. Adds `disabled` (`WP_DISABLE_FATAL_ERROR_HANDLER` truthy, checked first) and `stranded` (drop-in ours but its require target — computed relative to `WP_CONTENT_DIR`, the way the drop-in computes it, **not** via `FPAD_PLUGIN_DIR` — is not readable); legacy statuses pass through. All admin surfaces + the watchdog use this |
 | `dropin_is_ours()` / `read_dropin()` | (protected) Guarded read + ownership check against `OWNERSHIP_MARKER` |
 | `create_dropin_source()` | Recovery: regenerates a drop-in source matching the committed one (relative path + `QM_DISABLE_ERROR_HANDLER`) |

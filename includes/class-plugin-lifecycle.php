@@ -23,6 +23,18 @@ class FPAD_Plugin_Lifecycle {
 	public static function init() {
 		add_action( 'admin_init', array( __CLASS__, 'check_dropin' ) );
 		add_action( 'fpad_watchdog_check', array( __CLASS__, 'watchdog_check' ) );
+		// Front-end-reachable scheduling self-heal: an auto-updated, unattended
+		// site may never see admin_init, and cron events cannot restore
+		// themselves. Cheap per request (autoloaded option + cron-array lookup).
+		add_action( 'init', array( __CLASS__, 'ensure_scheduled' ) );
+	}
+
+	/**
+	 * Make sure both cron events exist (watchdog always; drain while enabled).
+	 */
+	public static function ensure_scheduled() {
+		self::schedule_watchdog();
+		FPAD_Notifier::maybe_schedule_drain();
 	}
 
 	/**
@@ -66,6 +78,10 @@ class FPAD_Plugin_Lifecycle {
 		// If the drop-in is not installed, try to install it
 		if ( ! $dropin_manager->is_dropin_installed() ) {
 			$dropin_manager->install_dropin();
+		} else {
+			// Ours but from an older release (git/rsync/Composer deploys never
+			// fire the upgrader hook): refresh it to the current source.
+			$dropin_manager->refresh_if_stale();
 		}
 
 		// Upgrade path: sites updated from a pre-watchdog version never
@@ -116,7 +132,12 @@ class FPAD_Plugin_Lifecycle {
 	 *                       24 h per distinct status.
 	 */
 	public static function watchdog_check() {
-		$manager      = new FPAD_Dropin_Manager();
+		$manager = new FPAD_Dropin_Manager();
+
+		// Unattended sites reach this hourly even when admin_init never fires;
+		// refresh a stale (pre-current-source) copy of our drop-in first.
+		$manager->refresh_if_stale();
+
 		$verification = $manager->verify_protection();
 		$status       = $verification['status'];
 

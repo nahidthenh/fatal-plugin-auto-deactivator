@@ -25,6 +25,16 @@ class FPAD_Dropin_Manager {
 	const OWNERSHIP_MARKER = 'FPAD_Fatal_Error_Handler';
 
 	/**
+	 * Content-version token present in the current drop-in source (both the
+	 * tracked file and the generator heredoc — sync pair). An installed drop-in
+	 * that is ours but lacks this token predates the current source and gets
+	 * refreshed by refresh_if_stale().
+	 *
+	 * @var string
+	 */
+	const DROPIN_VERSION_TOKEN = 'fpad-dropin-version: 2';
+
+	/**
 	 * The path to the drop-in file in the wp-content directory
 	 *
 	 * @var string
@@ -230,6 +240,31 @@ class FPAD_Dropin_Manager {
 	}
 
 	/**
+	 * Refresh an installed drop-in of ours whose content predates the current
+	 * source (missing DROPIN_VERSION_TOKEN).
+	 *
+	 * The upgrader hook only covers dashboard/CLI updates; git, rsync, and
+	 * Composer deploys replace the plugin directory without firing it, leaving
+	 * the wp-content copy stale until this runs (admin_init check or watchdog).
+	 *
+	 * @return bool Whether a refresh was performed and succeeded.
+	 */
+	public function refresh_if_stale() {
+		if ( ! $this->is_dropin_installed() ) {
+			return false;
+		}
+
+		$content = $this->read_dropin();
+		if ( is_string( $content ) && false === strpos( $content, self::DROPIN_VERSION_TOKEN ) ) {
+			$this->remove_dropin();
+
+			return (bool) $this->install_dropin();
+		}
+
+		return false;
+	}
+
+	/**
 	 * Read the installed drop-in's contents, or false when it can't be read.
 	 *
 	 * @return string|false
@@ -306,6 +341,8 @@ if ( ! class_exists( \'FPAD_Fatal_Error_Handler\' ) ) {
 
 // Avoid a conflict with the Query Monitor error handler.
 define( \'QM_DISABLE_ERROR_HANDLER\', true );
+
+// fpad-dropin-version: 2 — see includes/fatal-error-handler-dropin.php.
 
 // Return an instance of our custom error handler.
 return new FPAD_Fatal_Error_Handler();
