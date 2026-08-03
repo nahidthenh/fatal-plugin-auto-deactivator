@@ -168,7 +168,10 @@ Instantiated by the drop-in; all WP calls guarded for partial-load context.
 |--------|------------|----------|
 | `handle()` | public | Entry point called by WP core. Bails on `WP_SANDBOX_SCRAPING`. detect → resolve plugin (deactivate / attribute) → record in log (always) → render page. Swallows `Throwable` |
 | `detect_error()` | protected | `error_get_last()`; returns the error array only for E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR |
-| `match_active_plugin( $error )` | protected | Normalized prefix match of `$error['file']` against each active plugin's directory (single-file plugins matched exactly); returns basename or `''`. No side effects |
+| `match_active_plugin( $error )` | protected | Normalized prefix match of `$error['file']` against each active plugin's directory (single-file plugins matched exactly, symlinks resolved); returns basename or `''`. No side effects |
+| `path_variants( $path )` | public static | Normalized path plus its `realpath()` counterpart when they differ (symlink support) |
+| `path_is_inside( $files, $dir )` | public static | Whether any path variant of a file sits under `$dir` (both spellings) |
+| `matches_symlinked_child( $files, $root )` | public static | Whether a file lives inside a symlinked direct child of `$root` (individually symlinked plugins/themes resolve outside `wp-content`) |
 | `maybe_deactivate_plugin( $error )` | protected | Matches, then consults settings: `log_only` or a protected plugin → attribute only; otherwise deactivate. Returns outcome array or null |
 | `get_settings()` | protected | Guarded read of `fpad_settings` → `{ log_only, protected_plugins }`, with defaults |
 | `get_active_plugins()` | protected | `get_option( 'active_plugins' )` with manual includes fallback |

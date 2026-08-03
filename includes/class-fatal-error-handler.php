@@ -109,13 +109,20 @@ class FPAD_Fatal_Error_Handler {
 		$error_file  = str_replace( '\\', '/', $error['file'] );
 		$plugin_root = rtrim( str_replace( '\\', '/', WP_PLUGIN_DIR ), '/' );
 
+		// PHP reports the resolved (symlink-free) path in error_get_last(), while
+		// WP_PLUGIN_DIR is the logical path. Symlinked plugins — common in local
+		// dev setups — therefore never matched the logical path alone, so compare
+		// both spellings on each side.
+		$error_files = self::path_variants( $error_file );
+
 		foreach ( $this->get_active_plugins() as $plugin_base ) {
 			$plugin_dir = dirname( $plugin_base );
 
 			if ( '.' === $plugin_dir ) {
 				// Single-file plugin (e.g. hello.php): match the file exactly instead
 				// of "WP_PLUGIN_DIR/.", which never matches anything.
-				if ( $error_file === $plugin_root . '/' . $plugin_base ) {
+				$targets = self::path_variants( $plugin_root . '/' . $plugin_base );
+				if ( array_intersect( $error_files, $targets ) ) {
 					return $plugin_base;
 				}
 				continue;
@@ -123,12 +130,92 @@ class FPAD_Fatal_Error_Handler {
 
 			// Directory plugin: prefix match against the folder. The trailing slash
 			// stops "akismet" from matching a sibling "akismet-pro" directory.
-			if ( 0 === strpos( $error_file, $plugin_root . '/' . $plugin_dir . '/' ) ) {
-				return $plugin_base;
+			foreach ( self::path_variants( $plugin_root . '/' . $plugin_dir ) as $target ) {
+				foreach ( $error_files as $candidate ) {
+					if ( 0 === strpos( $candidate, $target . '/' ) ) {
+						return $plugin_base;
+					}
+				}
 			}
 		}
 
 		return '';
+	}
+
+	/**
+	 * Build the list of spellings a path may appear under.
+	 *
+	 * Returns the normalized path plus its resolved counterpart when the two
+	 * differ (i.e. when a symlink is involved). Uses only core PHP so it stays
+	 * safe in the shutdown context.
+	 *
+	 * @param string $path Path to expand.
+	 * @return array Unique normalized paths, without trailing slashes.
+	 */
+	public static function path_variants( $path ) {
+		$path     = rtrim( str_replace( '\\', '/', $path ), '/' );
+		$variants = array( $path );
+
+		$real = @realpath( $path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- open_basedir restrictions must not break detection.
+		if ( is_string( $real ) && '' !== $real ) {
+			$real = rtrim( str_replace( '\\', '/', $real ), '/' );
+			if ( $real !== $path ) {
+				$variants[] = $real;
+			}
+		}
+
+		return $variants;
+	}
+
+	/**
+	 * Check whether a file lives inside a directory, symlinks included.
+	 *
+	 * @param array  $files Path variants of the file (see path_variants()).
+	 * @param string $dir   Directory to test against.
+	 * @return bool
+	 */
+	public static function path_is_inside( $files, $dir ) {
+		foreach ( self::path_variants( $dir ) as $target ) {
+			foreach ( $files as $file ) {
+				if ( 0 === strpos( $file, $target . '/' ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a file lives inside a symlinked direct child of a root.
+	 *
+	 * A plugin or theme symlinked in individually resolves to a path outside
+	 * wp-content, so a prefix test against the root alone never matches. Scans
+	 * the root's direct children and compares their resolved paths instead.
+	 *
+	 * @param array  $files Path variants of the file (see path_variants()).
+	 * @param string $root  Directory whose children should be resolved.
+	 * @return bool
+	 */
+	public static function matches_symlinked_child( $files, $root ) {
+		$root = rtrim( str_replace( '\\', '/', $root ), '/' );
+
+		$children = @scandir( $root ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_scandir -- shutdown context: WP_Filesystem is unavailable and a warning must not derail detection.
+		if ( ! is_array( $children ) ) {
+			return false;
+		}
+
+		foreach ( $children as $child ) {
+			if ( '.' === $child || '..' === $child || ! is_link( $root . '/' . $child ) ) {
+				continue;
+			}
+
+			if ( self::path_is_inside( $files, $root . '/' . $child ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -266,13 +353,17 @@ class FPAD_Fatal_Error_Handler {
 			return rtrim( str_replace( '\\', '/', $path ), '/' );
 		};
 
+		// Symlinked plugin/theme directories report their resolved path in the
+		// error, so compare both spellings (see path_variants()).
+		$files = self::path_variants( $file );
+
 		// Must-use plugins (checked before the generic plugins directory).
-		if ( defined( 'WPMU_PLUGIN_DIR' ) && 0 === strpos( $file, $normalize( WPMU_PLUGIN_DIR ) . '/' ) ) {
+		if ( defined( 'WPMU_PLUGIN_DIR' ) && self::path_is_inside( $files, WPMU_PLUGIN_DIR ) ) {
 			return 'mu-plugin';
 		}
 
 		// Regular plugins.
-		if ( defined( 'WP_PLUGIN_DIR' ) && 0 === strpos( $file, $normalize( WP_PLUGIN_DIR ) . '/' ) ) {
+		if ( defined( 'WP_PLUGIN_DIR' ) && self::path_is_inside( $files, WP_PLUGIN_DIR ) ) {
 			return 'plugin';
 		}
 
@@ -283,7 +374,20 @@ class FPAD_Fatal_Error_Handler {
 		} elseif ( defined( 'WP_CONTENT_DIR' ) ) {
 			$theme_root = $normalize( WP_CONTENT_DIR ) . '/themes';
 		}
-		if ( '' !== $theme_root && 0 === strpos( $file, $theme_root . '/' ) ) {
+		if ( '' !== $theme_root && self::path_is_inside( $files, $theme_root ) ) {
+			return 'theme';
+		}
+
+		// Individually symlinked plugins/themes (a dev-setup staple) resolve to a
+		// path outside wp-content entirely, so the root checks above miss them.
+		// Resolve each direct child of the roots before giving up.
+		if ( defined( 'WPMU_PLUGIN_DIR' ) && self::matches_symlinked_child( $files, WPMU_PLUGIN_DIR ) ) {
+			return 'mu-plugin';
+		}
+		if ( defined( 'WP_PLUGIN_DIR' ) && self::matches_symlinked_child( $files, WP_PLUGIN_DIR ) ) {
+			return 'plugin';
+		}
+		if ( '' !== $theme_root && self::matches_symlinked_child( $files, $theme_root ) ) {
 			return 'theme';
 		}
 
@@ -303,17 +407,17 @@ class FPAD_Fatal_Error_Handler {
 				'blog-inactive.php',
 				'blog-suspended.php',
 			);
-			if ( in_array( $file, array_map( function ( $name ) use ( $content_dir ) {
-				return $content_dir . '/' . $name;
-			}, $dropins ), true ) ) {
-				return 'drop-in';
+			foreach ( $dropins as $name ) {
+				if ( array_intersect( $files, self::path_variants( $content_dir . '/' . $name ) ) ) {
+					return 'drop-in';
+				}
 			}
 		}
 
 		// WordPress core files.
 		if ( defined( 'ABSPATH' ) ) {
 			$abspath = $normalize( ABSPATH );
-			if ( 0 === strpos( $file, $abspath . '/wp-includes/' ) || 0 === strpos( $file, $abspath . '/wp-admin/' ) ) {
+			if ( self::path_is_inside( $files, $abspath . '/wp-includes' ) || self::path_is_inside( $files, $abspath . '/wp-admin' ) ) {
 				return 'core';
 			}
 		}
