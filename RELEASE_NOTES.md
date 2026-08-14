@@ -1,6 +1,6 @@
 # Fatal Plugin Auto Deactivator 1.5.0 — Release Notes
 
-Released 2026-07-29 · Requires WordPress 5.3+ / PHP 7.0+ · [Full changelog](readme.txt)
+Released 2026-08-15 · Requires WordPress 5.3+ / PHP 7.0+ · [Full changelog](readme.txt)
 
 1.5.0 is about **knowing** — until now the plugin quietly fixed your site and you found out on your next login. Now it tells you the moment something breaks, and it continuously proves that the protection itself is still standing.
 
@@ -34,6 +34,7 @@ Previously the protection drop-in was only re-checked when someone opened wp-adm
 
 - **Out-of-memory fatals are now handled too:** the drop-in reserves a small memory buffer that the handler frees on entry, so even "Allowed memory size exhausted" crashes get logged, alerted, and auto-deactivated.
 - **The error page always comes first:** the branded 500 page is rendered and flushed to the visitor *before* any alert is sent, so a slow or broken mail/HTTP stack can never delay what your visitors see.
+- **Very early fatals are no longer silent:** WordPress registers its fatal error handler before it loads its own options and escaping APIs and before `WP_PLUGIN_DIR` exists, so a crash in a caching (`advanced-cache.php`), object-cache, database (`db.php`) or multisite (`sunrise.php`) drop-in used to leave the handler unable to run — a plain blank page, with nothing logged and nothing sent. The handler now degrades gracefully in that window: the error page, the log entry, and the alert all still happen (the fatal is simply reported as unattributed, since no plugin has loaded that early). Each step is also isolated, so a third-party hook throwing during deactivation or an option write can no longer cost the visitor the page.
 
 ## Upgrade notes
 

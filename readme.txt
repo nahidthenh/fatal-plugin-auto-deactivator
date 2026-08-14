@@ -154,7 +154,7 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 
 == Changelog ==
 
-= 1.5.0 - 29/07/2026 =
+= 1.5.0 - 15/08/2026 =
 - Added: Instant alerts — get an email and/or webhook (generic JSON or Slack-compatible) the moment a fatal error is detected, saying which plugin was involved and what action was taken; identical repeats are rate-limited by a configurable cooldown, and alerts that fire too early for WordPress to deliver are queued and sent on the next page load
 - Added: "Send test email" / "Send test webhook" buttons on the Settings tab
 - Added: Protection watchdog — an hourly background check that re-verifies the protection drop-in, silently reinstalls it when missing, reclaims it once if another plugin overwrote it, and alerts you when protection is lost or restored
@@ -162,6 +162,7 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 - Added: "Protection last verified" heartbeat on the log page and in Site Health debug info
 - Added: Out-of-memory resilience — a small reserved memory buffer lets logging and alerts work even when the fatal is a memory-exhaustion error
 - Added: The plugin's first public filter, fpad_watchdog_interval, to change the watchdog cadence
+- Fixed: Fatal errors that happen very early in WordPress's startup — in a caching, object-cache, database, or multisite drop-in — no longer resulted in a blank white page. These are now logged, alerted, and shown on the custom error page like any other fatal
 
 = 1.4.0 - 23/07/2026 =
 - Added: Filter the Fatal Plugin Log by source and status, and search across plugin name, error message, and file path

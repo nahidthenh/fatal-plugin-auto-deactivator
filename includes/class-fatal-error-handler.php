@@ -40,18 +40,37 @@ class FPAD_Fatal_Error_Handler {
 				return;
 			}
 
+			// Each step below is isolated: they run WordPress code that executes
+			// third-party hooks (deactivate_plugins(), update_option()) in a
+			// half-broken request, so a throw in one must not cost us the others —
+			// above all the error page, which is the visitor-facing promise.
+
 			// Decide what to do about the plugin responsible: deactivate it, or just
 			// attribute it when log-only mode or the protected-plugins list applies.
-			$plugin_result = $this->maybe_deactivate_plugin( $error );
+			$plugin_result = null;
+			try {
+				$plugin_result = $this->maybe_deactivate_plugin( $error );
+			} catch ( Throwable $e ) {
+				// Attribution failed; carry on and report the fatal unattributed.
+			}
 
 			// Always record the fatal error in our log, regardless of WP_DEBUG and
 			// regardless of whether the error could be attributed to a plugin.
-			$this->add_to_deactivation_log( $error, $plugin_result );
+			try {
+				$this->add_to_deactivation_log( $error, $plugin_result );
+			} catch ( Throwable $e ) {
+				// Losing the log entry must not also cost the page and the alert.
+			}
 
 			// Render and flush the error page BEFORE sending alerts: by the time a
 			// mail/HTTP transport runs (either can hang on a broken stack, and
 			// wp_mail has no timeout control), the visitor already has the page.
-			$page_rendered = $this->display_custom_error_page( $error, $plugin_result );
+			$page_rendered = false;
+			try {
+				$page_rendered = $this->display_custom_error_page( $error, $plugin_result );
+			} catch ( Throwable $e ) {
+				// A render failure must not skip the alerts below.
+			}
 
 			// Best-effort instant alerts; internally guarded so an alerting failure
 			// cannot skip the exit below.
@@ -103,6 +122,17 @@ class FPAD_Fatal_Error_Handler {
 	 * @return string Plugin basename, or '' when no active plugin matches.
 	 */
 	protected function match_active_plugin( $error ) {
+		// WP_PLUGIN_DIR is only defined at wp-settings.php's
+		// wp_plugin_directory_constants() call, which runs long after the fatal
+		// error handler is registered. A fatal before that point (an early
+		// drop-in such as advanced-cache.php, object-cache.php, db.php or
+		// sunrise.php, or a core file) therefore reaches us without it — and on
+		// PHP 8 reading an undefined constant throws. Nothing is attributable
+		// that early anyway, since no plugin has loaded yet.
+		if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
+			return '';
+		}
+
 		// Normalize separators so prefix matching works on Windows too, mirroring
 		// detect_error_source(); the raw match here previously failed on Windows
 		// paths and on single-file plugins.
@@ -337,8 +367,17 @@ class FPAD_Fatal_Error_Handler {
 			}
 		}
 
+		// Still unavailable: the fatal happened before wp-includes/functions.php
+		// (which pulls in option.php) was loaded, so there is no options API and
+		// no active plugin to attribute the error to yet.
+		if ( ! function_exists( 'get_option' ) ) {
+			return array();
+		}
+
 		// Get active plugins
-		return get_option( 'active_plugins', array() );
+		$active = get_option( 'active_plugins', array() );
+
+		return is_array( $active ) ? $active : array();
 	}
 
 	/**
@@ -589,6 +628,50 @@ class FPAD_Fatal_Error_Handler {
 		}
 
 		return strlen( $uri ) > 255 ? substr( $uri, 0, 255 ) : $uri;
+	}
+
+	/**
+	 * Escape text for HTML output in a shutdown-safe way.
+	 *
+	 * WordPress registers its fatal error handler before it loads
+	 * wp-includes/formatting.php, so a fatal in an early drop-in or core file
+	 * reaches this class with esc_html() undefined — and calling it there would
+	 * throw, costing the visitor the error page. Same rendering either way:
+	 * esc_html() is htmlspecialchars() with these exact flags.
+	 *
+	 * @param string $text Raw text.
+	 * @return string
+	 */
+	protected function esc( $text ) {
+		if ( function_exists( 'esc_html' ) ) {
+			return esc_html( $text );
+		}
+
+		return htmlspecialchars( (string) $text, ENT_QUOTES, 'UTF-8' );
+	}
+
+	/**
+	 * Escape a URL for an href in a shutdown-safe way (see esc()).
+	 *
+	 * The fallback deliberately accepts same-origin paths only: without
+	 * esc_url()'s protocol allowlist, emitting anything scheme-bearing or
+	 * protocol-relative from a request-controlled value is not safe.
+	 *
+	 * @param string $url URL or path.
+	 * @return string Escaped href value, or '' when it cannot be vouched for.
+	 */
+	protected function esc_link( $url ) {
+		if ( function_exists( 'esc_url' ) ) {
+			return esc_url( $url );
+		}
+
+		$url = (string) $url;
+
+		if ( '' === $url || '/' !== $url[0] || 0 === strpos( $url, '//' ) ) {
+			return '';
+		}
+
+		return htmlspecialchars( $url, ENT_QUOTES, 'UTF-8' );
 	}
 
 	/**
@@ -1112,8 +1195,8 @@ class FPAD_Fatal_Error_Handler {
 		// controlled), so escape them before they reach the HTML.
 		$plugin_info = '';
 		if ( $plugin_result && ! empty( $plugin_result['deactivated'] ) ) {
-			$plugin_name    = esc_html( $plugin_result['plugin_name'] );
-			$plugin_version = $plugin_result['plugin_version'] ? ' v' . esc_html( $plugin_result['plugin_version'] ) : '';
+			$plugin_name    = $this->esc( $plugin_result['plugin_name'] );
+			$plugin_version = $plugin_result['plugin_version'] ? ' v' . $this->esc( $plugin_result['plugin_version'] ) : '';
 			$plugin_info    = '<p>The plugin <strong>' . $plugin_name . $plugin_version . '</strong> has been automatically deactivated to prevent further errors.</p>';
 		}
 
@@ -1193,7 +1276,7 @@ class FPAD_Fatal_Error_Handler {
 		<head>
 			<meta charset="utf-8">
 			<meta name="viewport" content="width=device-width, initial-scale=1">
-			<title>' . esc_html( $error_type ) . ' - ' . esc_html( $site_name ) . '</title>
+			<title>' . $this->esc( $error_type ) . ' - ' . $this->esc( $site_name ) . '</title>
 			<style>
 				body {
 					font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
@@ -1275,21 +1358,21 @@ class FPAD_Fatal_Error_Handler {
 		<body>
 			<div class="fpad_error_container">
 				<div class="fpad_error_header">
-					<h1>' . esc_html( $error_type ) . ' Detected</h1>
+					<h1>' . $this->esc( $error_type ) . ' Detected</h1>
 				</div>
-				<p>' . esc_html( $intro_message ) . '</p>' .
+				<p>' . $this->esc( $intro_message ) . '</p>' .
 		     //phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		     ( $show_details ? $plugin_info . '
 				<div class="fpad_error_details">
-					<p class="fpad_error_message">' . esc_html( $error['message'] ) . '</p>
-					<p class="fpad_error_location">File: ' . esc_html( $error['file'] ) . ' on line ' . esc_html( $error['line'] ) . '</p>
+					<p class="fpad_error_message">' . $this->esc( $error['message'] ) . '</p>
+					<p class="fpad_error_location">File: ' . $this->esc( $error['file'] ) . ' on line ' . $this->esc( $error['line'] ) . '</p>
 				</div>' : '<div class="fpad_error_details">
-					<p>' . esc_html( $generic_message ) . '</p>
+					<p>' . $this->esc( $generic_message ) . '</p>
 				</div>' ) . '
-				<p>' . esc_html( $closing_message ) . '</p>
+				<p>' . $this->esc( $closing_message ) . '</p>
 				<div class="fpad_actions">
-					<a href="' . esc_url( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ?? '' ) ) ) . '" class="fpad_button">Reload Page</a>
-					<a href="' . esc_url( $home_url ) . '" class="fpad_button fpad_secondary">Go to Homepage</a>
+					<a href="' . $this->esc_link( $this->current_request_uri() ) . '" class="fpad_button">Reload Page</a>
+					<a href="' . $this->esc_link( $home_url ) . '" class="fpad_button fpad_secondary">Go to Homepage</a>
 				</div>
 			</div>
 		</body>

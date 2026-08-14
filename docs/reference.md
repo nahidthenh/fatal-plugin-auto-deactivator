@@ -166,17 +166,18 @@ Instantiated by the drop-in; all WP calls guarded for partial-load context.
 
 | Method | Visibility | Behavior |
 |--------|------------|----------|
-| `handle()` | public | Entry point called by WP core. Bails on `WP_SANDBOX_SCRAPING`. detect → resolve plugin (deactivate / attribute) → record in log (always) → render page. Swallows `Throwable` |
+| `handle()` | public | Entry point called by WP core. Bails on `WP_SANDBOX_SCRAPING`. detect → resolve plugin (deactivate / attribute) → record in log (always) → render page → alert → `exit`. Swallows `Throwable`, and each of the four inner steps has its own Throwable guard so one failure cannot cost the rest |
 | `detect_error()` | protected | `error_get_last()`; returns the error array only for E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR |
-| `match_active_plugin( $error )` | protected | Normalized prefix match of `$error['file']` against each active plugin's directory (single-file plugins matched exactly); returns basename or `''`. No side effects |
+| `match_active_plugin( $error )` | protected | Normalized prefix match of `$error['file']` against each active plugin's directory (single-file plugins matched exactly); returns basename or `''`. No side effects. Returns `''` immediately when `WP_PLUGIN_DIR` is undefined (fatal before `wp_plugin_directory_constants()`; reading it would throw on PHP 8) |
 | `maybe_deactivate_plugin( $error )` | protected | Matches, then consults settings: `log_only` or a protected plugin → attribute only; otherwise deactivate. Returns outcome array or null |
 | `get_settings()` | protected | Guarded read of `fpad_settings` → `{ log_only, protected_plugins }`, with defaults |
-| `get_active_plugins()` | protected | `get_option( 'active_plugins' )` with manual includes fallback |
+| `get_active_plugins()` | protected | `get_option( 'active_plugins' )` with manual includes fallback; returns `array()` when `get_option()` still does not exist (fatal before `functions.php` → `option.php`) or the option is not an array |
 | `deactivate_plugin( $plugin_base, $error )` | protected | `deactivate_plugins()`, `error_log()`, queue admin notice; returns outcome array (status `deactivated`) or null |
 | `get_plugin_header( $plugin_base )` | protected | Resolves Name/Version from the plugin header with fallbacks |
 | `build_plugin_result( $plugin_base, $error, $deactivated, $status )` | protected | Builds the outcome array (`plugin_base`, `plugin_name`, `plugin_version`, `error`, `deactivated`, `status`) |
 | `store_deactivated_plugin_info( $plugin_base, $error )` | protected | Appends to the `fpad_deactivated_plugins` admin-notice queue |
 | `add_to_deactivation_log( $error, $plugin_result = null )` | protected | Prepends an entry to `fpad_deactivation_log` (caps at 100) for every fatal; records plugin info + `deactivated`/`status`. Guards `get_option`/`update_option` for shutdown context |
+| `esc( $text )` / `esc_link( $url )` | protected | Shutdown-safe escaping for the error page: `esc_html()`/`esc_url()` when loaded, else `htmlspecialchars( …, ENT_QUOTES, 'UTF-8' )` — `esc_link()`'s fallback accepts same-origin paths only. Needed because WP registers the fatal handler before `formatting.php` loads |
 | `display_custom_error_page( $error, $plugin_result )` | protected | Returns `false` if `headers_sent()`; otherwise sends HTTP 500, prints a self-contained HTML page (detail gated on `WP_DEBUG`+`WP_DEBUG_DISPLAY`/`FPAD_SHOW_ERROR_DETAILS`; source/status-aware copy), **flushes all output buffers to the client, and returns `true` — the `exit` happens in `handle()` after the alert sends** (since 1.5.0) |
 | `maybe_notify( $error, $plugin_result )` | protected | (1.5.0) Thin Throwable-guard wrapper around `send_alerts()`, called AFTER the page is rendered+flushed so transports can never delay the visitor and an alert failure cannot skip `handle()`'s exit |
 | `send_alerts( $error, $plugin_result )` | protected | (1.5.0) Channel/status gates → **per-channel** fingerprint cooldown (`fpad_alert_state`) → direct guarded send (each transport in its own try/catch, attempt-first stamping) or queue fallback. Untranslated strings |

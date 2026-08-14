@@ -34,13 +34,15 @@ All in `includes/class-fatal-error-handler.php` unless noted. Everything here mu
 | Repeat coalescing (×N counting) | `add_to_deactivation_log()`, `log_fingerprint()` | same | 1.4.0 |
 | Log context capture (request URI, PHP/WP version, message cap) | `add_to_deactivation_log()`, `current_request_uri()` | same | 1.4.0 |
 | Error-source classification (plugin/theme/mu-plugin/drop-in/core) | `detect_error_source()` — admin mirror: `FPAD_Admin::source_key()` | — | 1.2.0 |
-| Instant alerts: gates, cooldown, direct send | `maybe_notify()` (called between logging and the page) | `fpad_settings` (read), `fpad_alert_state` (write) | 1.5.0 |
+| Instant alerts: gates, cooldown, direct send | `maybe_notify()` → `send_alerts()` (called AFTER the page is rendered and flushed) | `fpad_settings` (read), `fpad_alert_state` (write) | 1.5.0 |
 | Instant alerts: payload/content builders | `build_alert_subject()`, `build_alert_email_body()`, `build_webhook_json_payload()`, `build_webhook_slack_payload()`, `status_verb()`, `error_type_name()`, `alert_site_url()` | — | 1.5.0 |
 | Instant alerts: early-fatal queue fallback | `queue_alert()` — drained by `FPAD_Notifier` on normal requests | `fpad_alert_queue` (write) | 1.5.0 |
 | OOM survival (reserved memory buffer) | Drop-in reserves 256 KB in `$GLOBALS['fpad_reserved_memory']`; `handle()` frees it first | — | 1.5.0 |
 | Custom 500 error page (HTML + inline CSS) | `display_custom_error_page()` | — | 1.0.0 |
 | Error-detail gating on the public page | `display_custom_error_page()` (checks `WP_DEBUG`, `WP_DEBUG_DISPLAY`, `FPAD_SHOW_ERROR_DETAILS`) | — | 1.2.1 |
 | Handler self-protection (never crash the crash handler) | `handle()` `try/catch (Throwable)`; `headers_sent()` guard in `display_custom_error_page()` | — | 1.2.0 |
+| Per-step isolation (one failing step can't cost the others) | `handle()` — separate Throwable guard around attribute / log / render / alert | — | 1.5.0 |
+| Earliest-boot survival (fatal in `advanced-cache.php`, `object-cache.php`, `db.php`, `sunrise.php`) | `match_active_plugin()` (`WP_PLUGIN_DIR` guard), `get_active_plugins()` (`get_option` guard), `esc()` / `esc_link()` | — | 1.5.0 |
 | Query Monitor conflict guard | `includes/fatal-error-handler-dropin.php` (`QM_DISABLE_ERROR_HANDLER`) | — | 1.0.1 |
 
 ### Drop-in lifecycle (install / verify / heal)
@@ -145,7 +147,7 @@ Note there are **two different md5 identities** for log entries — do not confl
 
 ### Change the public error page
 
-Everything is in `FPAD_Fatal_Error_Handler::display_custom_error_page()`: one self-contained HTML document with inline CSS, `esc_html`/`esc_url` on all dynamic values. Constraints: no enqueued assets, no unguarded WP calls, keep the `headers_sent()` bail and the `WP_DEBUG`/`WP_DEBUG_DISPLAY`/`FPAD_SHOW_ERROR_DETAILS` detail gate. Source-specific copy lives in the `switch ( $source )` block; deactivation-outcome copy in its `plugin` case.
+Everything is in `FPAD_Fatal_Error_Handler::display_custom_error_page()`: one self-contained HTML document with inline CSS, `$this->esc()`/`$this->esc_link()` (shutdown-safe `esc_html`/`esc_url` wrappers) on all dynamic values. Constraints: no enqueued assets, no unguarded WP calls, keep the `headers_sent()` bail and the `WP_DEBUG`/`WP_DEBUG_DISPLAY`/`FPAD_SHOW_ERROR_DETAILS` detail gate. Source-specific copy lives in the `switch ( $source )` block; deactivation-outcome copy in its `plugin` case.
 
 ### Change which plugin gets blamed (attribution)
 
