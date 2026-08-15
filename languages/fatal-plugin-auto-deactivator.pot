@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-08-14T19:22:49+00:00\n"
+"POT-Creation-Date: 2026-08-15T05:09:24+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: fatal-plugin-auto-deactivator\n"
@@ -383,32 +383,32 @@ msgid "Settings saved."
 msgstr ""
 
 #: includes/class-admin.php:1106
-#: includes/class-plugin-lifecycle.php:319
+#: includes/class-plugin-lifecycle.php:356
 msgid "Another plugin currently owns wp-content/fatal-error-handler.php, so Fatal Plugin Auto Deactivator is not protecting your site."
 msgstr ""
 
 #: includes/class-admin.php:1108
-#: includes/class-plugin-lifecycle.php:321
+#: includes/class-plugin-lifecycle.php:358
 msgid "Your wp-content directory is not writable, so the protection file could not be installed. Check file permissions."
 msgstr ""
 
 #: includes/class-admin.php:1110
-#: includes/class-plugin-lifecycle.php:323
+#: includes/class-plugin-lifecycle.php:360
 msgid "WordPress could not access the filesystem (credentials may be required), so the protection file could not be installed."
 msgstr ""
 
 #: includes/class-admin.php:1112
-#: includes/class-plugin-lifecycle.php:325
+#: includes/class-plugin-lifecycle.php:362
 msgid "The protection file is not installed, so your site is not currently protected."
 msgstr ""
 
 #: includes/class-admin.php:1114
-#: includes/class-plugin-lifecycle.php:327
+#: includes/class-plugin-lifecycle.php:364
 msgid "The WP_DISABLE_FATAL_ERROR_HANDLER constant is enabled (usually in wp-config.php), so WordPress never runs any fatal error handler and Fatal Plugin Auto Deactivator cannot protect your site. Remove that constant to restore protection."
 msgstr ""
 
 #: includes/class-admin.php:1116
-#: includes/class-plugin-lifecycle.php:329
+#: includes/class-plugin-lifecycle.php:366
 msgid "The protection file is installed but points at nothing: the plugin folder appears to have been moved or renamed, so wp-content/plugins/fatal-plugin-auto-deactivator no longer contains the handler it tries to load. Restore the plugin to that folder to fix protection."
 msgstr ""
 
@@ -529,24 +529,24 @@ msgstr ""
 msgid "Log:"
 msgstr ""
 
-#: includes/class-plugin-lifecycle.php:278
+#: includes/class-plugin-lifecycle.php:315
 msgid "Fatal error protection has been restored — the fatal error handler drop-in is installed and working again."
 msgstr ""
 
 #. translators: %s: site name
-#: includes/class-plugin-lifecycle.php:280
+#: includes/class-plugin-lifecycle.php:317
 #, php-format
 msgid "[%s] Fatal error protection restored"
 msgstr ""
 
 #. translators: %s: site name
-#: includes/class-plugin-lifecycle.php:284
+#: includes/class-plugin-lifecycle.php:321
 #, php-format
 msgid "[%s] Fatal error protection is not active"
 msgstr ""
 
 #. translators: %s: internal protection status keyword
-#: includes/class-plugin-lifecycle.php:333
+#: includes/class-plugin-lifecycle.php:370
 #, php-format
 msgid "Fatal error protection is not active (status: %s)."
 msgstr ""

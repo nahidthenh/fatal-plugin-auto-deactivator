@@ -77,7 +77,9 @@ class FPAD_Plugin_Lifecycle {
 
 		// If the drop-in is not installed, try to install it
 		if ( ! $dropin_manager->is_dropin_installed() ) {
-			$dropin_manager->install_dropin();
+			if ( self::may_reclaim_dropin( $dropin_manager ) ) {
+				$dropin_manager->install_dropin();
+			}
 		} else {
 			// Ours but from an older release (git/rsync/Composer deploys never
 			// fire the upgrader hook): refresh it to the current source.
@@ -89,6 +91,41 @@ class FPAD_Plugin_Lifecycle {
 		// the alert-drain cron while a notification channel is enabled.
 		self::schedule_watchdog();
 		FPAD_Notifier::maybe_schedule_drain();
+	}
+
+	/**
+	 * Whether check_dropin() may (re)install our drop-in on this request.
+	 *
+	 * A missing drop-in is always restored immediately. A FOREIGN one is
+	 * reclaimed at most once per 24 h, sharing the watchdog's back-off state:
+	 * without this, admin_init would silently steal the slot back on every
+	 * wp-admin page load, so the watchdog's "two plugins never fight over the
+	 * slot" rule — and the protection-lost alert that follows it — would only
+	 * ever hold on sites nobody logs into. When the back-off blocks a reclaim
+	 * the admin still sees the status banner, with its one-click "Reinstall
+	 * protection" action (which deliberately ignores this back-off, being an
+	 * explicit choice rather than an automatic one).
+	 *
+	 * @param FPAD_Dropin_Manager $manager Drop-in manager for this request.
+	 * @return bool
+	 */
+	protected static function may_reclaim_dropin( $manager ) {
+		if ( 'foreign' !== $manager->get_status() ) {
+			return true;
+		}
+
+		$state = self::get_watchdog_state();
+		$now   = time();
+
+		if ( 0 !== $state['reclaim_attempts'] && ( $now - $state['last_reclaim'] ) < DAY_IN_SECONDS ) {
+			return false;
+		}
+
+		$state['reclaim_attempts'] = $state['reclaim_attempts'] + 1;
+		$state['last_reclaim']     = $now;
+		update_option( 'fpad_watchdog_state', $state, false );
+
+		return true;
 	}
 
 	/**

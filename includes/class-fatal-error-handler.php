@@ -617,57 +617,85 @@ class FPAD_Fatal_Error_Handler {
 			return '';
 		}
 
-		$uri = (string) $_SERVER['REQUEST_URI'];
-		$uri = function_exists( 'wp_unslash' ) ? wp_unslash( $uri ) : stripslashes( $uri );
+		$raw = stripslashes( (string) $_SERVER['REQUEST_URI'] );
 
-		if ( function_exists( 'sanitize_text_field' ) ) {
-			$uri = sanitize_text_field( $uri );
-		} else {
-			// Pure-PHP fallback for the partially-loaded shutdown context.
-			$uri = preg_replace( '/[^\x20-\x7E]/', '', str_replace( array( '<', '>', '"', "'" ), '', $uri ) );
-		}
+		// sanitize_text_field() reaches get_option( 'blog_charset' ) internally, so
+		// it is a wp_call() — see that method for why existing is not the same as
+		// working here. The fallback strips the same characters that matter for a
+		// value we only ever store and re-emit escaped.
+		$uri = $this->wp_call(
+			'sanitize_text_field',
+			array( $this->wp_call( 'wp_unslash', array( (string) $_SERVER['REQUEST_URI'] ), $raw ) ),
+			preg_replace( '/[^\x20-\x7E]/', '', str_replace( array( '<', '>', '"', "'" ), '', $raw ) )
+		);
+
+		$uri = (string) $uri;
 
 		return strlen( $uri ) > 255 ? substr( $uri, 0, 255 ) : $uri;
 	}
 
 	/**
-	 * Escape text for HTML output in a shutdown-safe way.
+	 * Call a WordPress function, but only when it both exists and actually works.
 	 *
-	 * WordPress registers its fatal error handler before it loads
-	 * wp-includes/formatting.php, so a fatal in an early drop-in or core file
-	 * reaches this class with esc_html() undefined — and calling it there would
-	 * throw, costing the visitor the error page. Same rendering either way:
-	 * esc_html() is htmlspecialchars() with these exact flags.
+	 * `function_exists()` alone is not a sufficient guard in this class. A fatal
+	 * inside `wp_start_object_cache()` — a broken `object-cache.php` drop-in, the
+	 * single most common cause of this situation — aborts before core can load
+	 * `wp-includes/cache.php`, so `wp_cache_get()` is never defined. Everything
+	 * built on the options API then *exists but throws*: `get_option()` directly,
+	 * and `esc_html()` / `sanitize_text_field()` / `get_bloginfo()` indirectly, via
+	 * `wp_check_invalid_utf8()`'s `get_option( 'blog_charset' )` lookup.
+	 *
+	 * @param string $function Function name.
+	 * @param array  $args     Positional arguments.
+	 * @param mixed  $fallback Value to return when the call is unavailable or throws.
+	 * @return mixed
+	 */
+	protected function wp_call( $function, $args, $fallback ) {
+		if ( ! function_exists( $function ) ) {
+			return $fallback;
+		}
+
+		try {
+			return call_user_func_array( $function, $args );
+		} catch ( Throwable $e ) {
+			return $fallback;
+		}
+	}
+
+	/**
+	 * Escape text for HTML output on the error page.
+	 *
+	 * Deliberately pure PHP rather than `esc_html()`: this is exactly what
+	 * `esc_html()` does at its core, minus a `get_option( 'blog_charset' )` lookup
+	 * that can throw in the contexts this handler has to survive (see wp_call()).
+	 * The page is a self-contained document, so the `esc_html` filter is nothing
+	 * we want to run mid-crash anyway.
 	 *
 	 * @param string $text Raw text.
 	 * @return string
 	 */
 	protected function esc( $text ) {
-		if ( function_exists( 'esc_html' ) ) {
-			return esc_html( $text );
-		}
-
 		return htmlspecialchars( (string) $text, ENT_QUOTES, 'UTF-8' );
 	}
 
 	/**
-	 * Escape a URL for an href in a shutdown-safe way (see esc()).
+	 * Escape a URL for an `href` on the error page (pure PHP, see esc()).
 	 *
-	 * The fallback deliberately accepts same-origin paths only: without
-	 * esc_url()'s protocol allowlist, emitting anything scheme-bearing or
-	 * protocol-relative from a request-controlled value is not safe.
+	 * Only an absolute path or an explicit http(s) URL is ever emitted, so no
+	 * `javascript:`/`data:` scheme and no protocol-relative URL can reach the
+	 * attribute even though one input is request-controlled.
 	 *
 	 * @param string $url URL or path.
 	 * @return string Escaped href value, or '' when it cannot be vouched for.
 	 */
 	protected function esc_link( $url ) {
-		if ( function_exists( 'esc_url' ) ) {
-			return esc_url( $url );
-		}
-
 		$url = (string) $url;
 
-		if ( '' === $url || '/' !== $url[0] || 0 === strpos( $url, '//' ) ) {
+		if ( '' === $url || 0 === strpos( $url, '//' ) ) {
+			return '';
+		}
+
+		if ( '/' !== $url[0] && ! preg_match( '#^https?://#i', $url ) ) {
 			return '';
 		}
 
@@ -1183,12 +1211,16 @@ class FPAD_Fatal_Error_Handler {
 				break;
 		}
 
-		// Get site name and home URL
-		$site_name = 'WordPress Site';
-		$home_url  = '/';
-		if ( function_exists( 'get_bloginfo' ) ) {
-			$site_name = get_bloginfo( 'name' );
-			$home_url  = home_url();
+		// Get site name and home URL. Both read options internally, so they go
+		// through wp_call(): on a broken object cache they exist but throw.
+		$site_name = (string) $this->wp_call( 'get_bloginfo', array( 'name' ), 'WordPress Site' );
+		$home_url  = (string) $this->wp_call( 'home_url', array(), '/' );
+
+		if ( '' === $site_name ) {
+			$site_name = 'WordPress Site';
+		}
+		if ( '' === $home_url ) {
+			$home_url = '/';
 		}
 
 		// Prepare plugin information. Name/Version come from plugin headers (author

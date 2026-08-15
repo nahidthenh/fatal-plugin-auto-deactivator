@@ -162,7 +162,8 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 - Added: "Protection last verified" heartbeat on the log page and in Site Health debug info
 - Added: Out-of-memory resilience — a small reserved memory buffer lets logging and alerts work even when the fatal is a memory-exhaustion error
 - Added: The plugin's first public filter, fpad_watchdog_interval, to change the watchdog cadence
-- Fixed: Fatal errors that happen very early in WordPress's startup — in a caching, object-cache, database, or multisite drop-in — no longer resulted in a blank white page. These are now logged, alerted, and shown on the custom error page like any other fatal
+- Fixed: Fatal errors that happen very early in WordPress's startup — in a caching, object-cache, database, or multisite drop-in — no longer result in a blank white page. WordPress starts its fatal error handling before it finishes loading its own escaping and options functions, which previously left this plugin unable to run at all; it now degrades gracefully and still shows the custom error page (reported as "not attributed", since no plugin has loaded that early)
+- Fixed: When another plugin owns the fatal error handler file, it is now reclaimed at most once per 24 hours from wp-admin too, not on every page load. Previously the watchdog's "don't fight another plugin for the slot" rule was bypassed whenever an administrator was browsing, so the conflict was never surfaced — the status banner and its one-click "Reinstall protection" action now appear instead
 
 = 1.4.0 - 23/07/2026 =
 - Added: Filter the Fatal Plugin Log by source and status, and search across plugin name, error message, and file path

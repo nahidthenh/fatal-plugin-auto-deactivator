@@ -6,7 +6,7 @@ Defined in `fatal-plugin-auto-deactivator.php` (all wrapped in `! defined()` gua
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `FPAD_VERSION` | `'1.4.0'` | Plugin version (keep in sync with plugin header + readme.txt stable tag) |
+| `FPAD_VERSION` | `'1.5.0'` | Plugin version (keep in sync with plugin header + readme.txt stable tag) |
 | `FPAD_PLUGIN_BASENAME` | `plugin_basename( __FILE__ )` | Used to detect self-updates in `FPAD_Utils::plugin_upgrade_hook()` |
 | `FPAD_PLUGIN_DIR` | `plugin_dir_path( __FILE__ )` | Filesystem path; also defined independently by the drop-in relative to `wp-content/` |
 | `FPAD_PLUGIN_URL` | `plugin_dir_url( __FILE__ )` | Currently unused by code; reserved for assets |
@@ -120,7 +120,7 @@ All six options are deleted in `FPAD_Plugin_Lifecycle::uninstall()`.
 | `init` (prio 20) | `FPAD_Notifier::drain_queue` | Deliver alerts queued during early fatals; fresh items only — failure retries wait for the cron backstop (since 1.5.0) |
 | `fpad_notifier_drain` (cron, hourly) | `FPAD_Notifier::drain_queue` | Drain backstop for front-end-only traffic; scheduled lazily when a channel is enabled, unscheduled when both disabled (since 1.5.0) |
 | `fpad_watchdog_check` (cron, hourly) | `FPAD_Plugin_Lifecycle::watchdog_check` | Verify/heal protection; scheduled on activation + self-scheduled from `check_dropin()` (since 1.5.0) |
-| `admin_init` | `FPAD_Plugin_Lifecycle::check_dropin` | Self-heal missing drop-in |
+| `admin_init` | `FPAD_Plugin_Lifecycle::check_dropin` | Self-heal missing drop-in (foreign one only within the 24 h reclaim back-off) |
 | `admin_init` | `FPAD_Admin::handle_admin_actions` | Handle the nonce-protected "Reinstall protection" and per-entry "delete" actions |
 | `admin_post_fpad_export_log` | `FPAD_Admin::export_log` | Stream the log as a CSV or JSON download (nonce `fpad_export_log`) |
 | `admin_post_fpad_test_alert` | `FPAD_Admin::handle_test_alert` | Send a test notification through one channel (nonce `fpad_test_alert`, since 1.5.0) |
@@ -177,7 +177,8 @@ Instantiated by the drop-in; all WP calls guarded for partial-load context.
 | `build_plugin_result( $plugin_base, $error, $deactivated, $status )` | protected | Builds the outcome array (`plugin_base`, `plugin_name`, `plugin_version`, `error`, `deactivated`, `status`) |
 | `store_deactivated_plugin_info( $plugin_base, $error )` | protected | Appends to the `fpad_deactivated_plugins` admin-notice queue |
 | `add_to_deactivation_log( $error, $plugin_result = null )` | protected | Prepends an entry to `fpad_deactivation_log` (caps at 100) for every fatal; records plugin info + `deactivated`/`status`. Guards `get_option`/`update_option` for shutdown context |
-| `esc( $text )` / `esc_link( $url )` | protected | Shutdown-safe escaping for the error page: `esc_html()`/`esc_url()` when loaded, else `htmlspecialchars( …, ENT_QUOTES, 'UTF-8' )` — `esc_link()`'s fallback accepts same-origin paths only. Needed because WP registers the fatal handler before `formatting.php` loads |
+| `wp_call( $function, $args, $fallback )` | protected | Calls a WP function only when it exists **and** does not throw; returns `$fallback` otherwise. Needed because a fatal in `wp_start_object_cache()` leaves `wp_cache_get()` undefined, so the whole options API — and `esc_html()`/`sanitize_text_field()`/`get_bloginfo()` through it — exists but throws |
+| `esc( $text )` / `esc_link( $url )` | protected | Pure-PHP escaping for the error page (`htmlspecialchars( …, ENT_QUOTES, 'UTF-8' )`), deliberately not `esc_html()`/`esc_url()`: those reach `get_option( 'blog_charset' )` and can throw mid-crash. `esc_link()` emits only an absolute path or an explicit `http(s)://` URL, so no `javascript:`/`data:`/protocol-relative value can reach an `href` |
 | `display_custom_error_page( $error, $plugin_result )` | protected | Returns `false` if `headers_sent()`; otherwise sends HTTP 500, prints a self-contained HTML page (detail gated on `WP_DEBUG`+`WP_DEBUG_DISPLAY`/`FPAD_SHOW_ERROR_DETAILS`; source/status-aware copy), **flushes all output buffers to the client, and returns `true` — the `exit` happens in `handle()` after the alert sends** (since 1.5.0) |
 | `maybe_notify( $error, $plugin_result )` | protected | (1.5.0) Thin Throwable-guard wrapper around `send_alerts()`, called AFTER the page is rendered+flushed so transports can never delay the visitor and an alert failure cannot skip `handle()`'s exit |
 | `send_alerts( $error, $plugin_result )` | protected | (1.5.0) Channel/status gates → **per-channel** fingerprint cooldown (`fpad_alert_state`) → direct guarded send (each transport in its own try/catch, attempt-first stamping) or queue fallback. Untranslated strings |
@@ -246,7 +247,7 @@ Internal helpers (private):
 
 ### `FPAD_Plugin_Lifecycle` (`includes/class-plugin-lifecycle.php`)
 
-Static. `activate()` installs the drop-in + schedules the watchdog; `deactivate()` removes the drop-in + clears both cron events; `uninstall()` additionally deletes all six `fpad_*` options. `check_dropin()` (on `admin_init`) reinstalls when `is_dropin_installed()` is false and self-schedules the watchdog (upgrade path).
+Static. `activate()` installs the drop-in + schedules the watchdog; `deactivate()` removes the drop-in + clears both cron events; `uninstall()` additionally deletes all six `fpad_*` options. `check_dropin()` (on `admin_init`) reinstalls when `is_dropin_installed()` is false — gated by `may_reclaim_dropin()`, so a *foreign* drop-in is reclaimed at most once per 24 h using the same `fpad_watchdog_state` back-off the watchdog uses (otherwise every wp-admin page load would steal the slot back and the "two plugins never fight" rule would hold only on sites nobody logs into; the banner's manual "Reinstall protection" action deliberately ignores the back-off) — and self-schedules the watchdog (upgrade path).
 
 Watchdog methods (since 1.5.0):
 

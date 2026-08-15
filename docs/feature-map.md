@@ -42,7 +42,7 @@ All in `includes/class-fatal-error-handler.php` unless noted. Everything here mu
 | Error-detail gating on the public page | `display_custom_error_page()` (checks `WP_DEBUG`, `WP_DEBUG_DISPLAY`, `FPAD_SHOW_ERROR_DETAILS`) | — | 1.2.1 |
 | Handler self-protection (never crash the crash handler) | `handle()` `try/catch (Throwable)`; `headers_sent()` guard in `display_custom_error_page()` | — | 1.2.0 |
 | Per-step isolation (one failing step can't cost the others) | `handle()` — separate Throwable guard around attribute / log / render / alert | — | 1.5.0 |
-| Earliest-boot survival (fatal in `advanced-cache.php`, `object-cache.php`, `db.php`, `sunrise.php`) | `match_active_plugin()` (`WP_PLUGIN_DIR` guard), `get_active_plugins()` (`get_option` guard), `esc()` / `esc_link()` | — | 1.5.0 |
+| Earliest-boot survival (fatal in `advanced-cache.php`, `object-cache.php`, `db.php`, `sunrise.php`) | `match_active_plugin()` (`WP_PLUGIN_DIR` guard), `get_active_plugins()` (`get_option` guard), `wp_call()`, pure-PHP `esc()` / `esc_link()` | — | 1.5.0 |
 | Query Monitor conflict guard | `includes/fatal-error-handler-dropin.php` (`QM_DISABLE_ERROR_HANDLER`) | — | 1.0.1 |
 
 ### Drop-in lifecycle (install / verify / heal)
@@ -59,6 +59,7 @@ All in `includes/class-fatal-error-handler.php` unless noted. Everything here mu
 | Drop-in source regeneration fallback | `FPAD_Dropin_Manager::create_dropin_source()` — **must stay in sync with the tracked source file** | `class-dropin-manager.php` | 1.0.0 |
 | Install on activation / remove on deactivation & uninstall | `FPAD_Plugin_Lifecycle::activate()` / `deactivate()` / `uninstall()` | `class-plugin-lifecycle.php` | 1.0.0 |
 | Self-heal missing/overwritten drop-in | `FPAD_Plugin_Lifecycle::check_dropin()` on `admin_init` | `class-plugin-lifecycle.php` | 1.0.0 |
+| Foreign-reclaim back-off shared by `admin_init` and the watchdog | `may_reclaim_dropin()` + `get_watchdog_state()` | `fpad_watchdog_state` | 1.5.0 |
 | Survive self-update (plugin dir wiped on update) | `FPAD_Utils::plugin_upgrade_hook()` on `upgrader_process_complete` | `class-utils.php` | 1.0.1 |
 | Options cleanup on uninstall | `FPAD_Plugin_Lifecycle::uninstall()` | `class-plugin-lifecycle.php` | 1.0.0 |
 
