@@ -3,7 +3,7 @@ Contributors: rudlinkon
 Tags: fatal error, plugin deactivation, error handling, site protection, crash prevention
 Requires at least: 5.3
 Tested up to: 7.0
-Stable tag: 1.5.0
+Stable tag: 1.5.1
 Requires PHP: 7.0
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
@@ -153,6 +153,10 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 4. Plugin causing fatal error was auto-deactivated for site safety.
 
 == Changelog ==
+
+= 1.5.1 - 03/08/2026 =
+- Fixed: Fatal errors in plugins whose folder is a symbolic link are now attributed and auto-deactivated correctly — PHP reports the resolved path for such files, so they previously showed as "could not be attributed" and the crashing plugin stayed active
+- Fixed: The log viewer's Source column (and the CSV/JSON export) now labels symlinked plugins, must-use plugins, and themes as such instead of "Unknown"
 
 = 1.5.0 - 15/08/2026 =
 - Added: Instant alerts — get an email and/or webhook (generic JSON or Slack-compatible) the moment a fatal error is detected, saying which plugin was involved and what action was taken; identical repeats are rate-limited by a configurable cooldown, and alerts that fire too early for WordPress to deliver are queued and sent on the next page load

@@ -564,16 +564,32 @@ class FPAD_Admin {
 			return rtrim( str_replace( '\\', '/', $path ), '/' );
 		};
 
-		if ( defined( 'WPMU_PLUGIN_DIR' ) && 0 === strpos( $file, $normalize( WPMU_PLUGIN_DIR ) . '/' ) ) {
+		// Symlinked plugins/themes are logged under their resolved path, so match
+		// both spellings — see FPAD_Fatal_Error_Handler::path_variants().
+		$files = FPAD_Fatal_Error_Handler::path_variants( $file );
+
+		if ( defined( 'WPMU_PLUGIN_DIR' ) && FPAD_Fatal_Error_Handler::path_is_inside( $files, WPMU_PLUGIN_DIR ) ) {
 			return 'mu-plugin';
 		}
 
-		if ( defined( 'WP_PLUGIN_DIR' ) && 0 === strpos( $file, $normalize( WP_PLUGIN_DIR ) . '/' ) ) {
+		if ( defined( 'WP_PLUGIN_DIR' ) && FPAD_Fatal_Error_Handler::path_is_inside( $files, WP_PLUGIN_DIR ) ) {
 			return 'plugin';
 		}
 
 		$theme_root = function_exists( 'get_theme_root' ) ? $normalize( get_theme_root() ) : '';
-		if ( '' !== $theme_root && 0 === strpos( $file, $theme_root . '/' ) ) {
+		if ( '' !== $theme_root && FPAD_Fatal_Error_Handler::path_is_inside( $files, $theme_root ) ) {
+			return 'theme';
+		}
+
+		// A plugin/theme symlinked in individually resolves outside wp-content, so
+		// the root prefix tests above cannot see it.
+		if ( defined( 'WPMU_PLUGIN_DIR' ) && FPAD_Fatal_Error_Handler::matches_symlinked_child( $files, WPMU_PLUGIN_DIR ) ) {
+			return 'mu-plugin';
+		}
+		if ( defined( 'WP_PLUGIN_DIR' ) && FPAD_Fatal_Error_Handler::matches_symlinked_child( $files, WP_PLUGIN_DIR ) ) {
+			return 'plugin';
+		}
+		if ( '' !== $theme_root && FPAD_Fatal_Error_Handler::matches_symlinked_child( $files, $theme_root ) ) {
 			return 'theme';
 		}
 
