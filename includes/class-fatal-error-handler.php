@@ -177,6 +177,25 @@ class FPAD_Fatal_Error_Handler {
 			}
 		}
 
+		// Fallback: a symlink *inside* a plugin folder — a shared vendor/ directory
+		// in a monorepo, say — resolves outside that folder, so no spelling of the
+		// folder itself can contain the error file. Scanning is only worth it when
+		// the file resolved outside the plugins root entirely; inside it, the loop
+		// above already had every chance to match.
+		if ( ! self::path_is_inside( $error_files, $plugin_root ) ) {
+			foreach ( $this->get_active_plugins() as $plugin_base ) {
+				$plugin_dir = dirname( $plugin_base );
+
+				if ( '.' === $plugin_dir ) {
+					continue;
+				}
+
+				if ( self::matches_symlinked_child( $error_files, $plugin_root . '/' . $plugin_dir ) ) {
+					return $plugin_base;
+				}
+			}
+		}
+
 		return '';
 	}
 
@@ -225,17 +244,27 @@ class FPAD_Fatal_Error_Handler {
 	}
 
 	/**
-	 * Check whether a file lives inside a symlinked direct child of a root.
+	 * Check whether a file is, or lives inside, a symlinked child of a root.
 	 *
 	 * A plugin or theme symlinked in individually resolves to a path outside
 	 * wp-content, so a prefix test against the root alone never matches. Scans
-	 * the root's direct children and compares their resolved paths instead.
+	 * the root's children and compares their resolved paths instead. The child
+	 * may be a directory (the file sits under it) or a file of its own — a
+	 * symlinked single-file plugin such as plugins/hello.php.
+	 *
+	 * $depth > 1 also descends into real subdirectories, which catches a symlink
+	 * *inside* a plugin or theme folder (a shared vendor/ directory, say). Real
+	 * directories only: symlinked ones are compared, never followed, so a link
+	 * loop cannot trap the scan. Directory reads are cheap but not free, and this
+	 * runs in a crashed request — keep the depth small and only call it once the
+	 * plain prefix tests have failed.
 	 *
 	 * @param array  $files Path variants of the file (see path_variants()).
 	 * @param string $root  Directory whose children should be resolved.
+	 * @param int    $depth How many levels below $root to scan. Default 1.
 	 * @return bool
 	 */
-	public static function matches_symlinked_child( $files, $root ) {
+	public static function matches_symlinked_child( $files, $root, $depth = 1 ) {
 		$root = rtrim( str_replace( '\\', '/', $root ), '/' );
 
 		$children = @scandir( $root ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_scandir -- shutdown context: WP_Filesystem is unavailable and a warning must not derail detection.
@@ -243,12 +272,33 @@ class FPAD_Fatal_Error_Handler {
 			return false;
 		}
 
+		$descend = array();
+
 		foreach ( $children as $child ) {
-			if ( '.' === $child || '..' === $child || ! is_link( $root . '/' . $child ) ) {
+			if ( '.' === $child || '..' === $child ) {
 				continue;
 			}
 
-			if ( self::path_is_inside( $files, $root . '/' . $child ) ) {
+			$path = $root . '/' . $child;
+
+			if ( ! is_link( $path ) ) {
+				if ( $depth > 1 && is_dir( $path ) ) {
+					$descend[] = $path;
+				}
+				continue;
+			}
+
+			// A symlinked file matches the link itself; a symlinked directory
+			// matches anything below it.
+			if ( array_intersect( $files, self::path_variants( $path ) ) || self::path_is_inside( $files, $path ) ) {
+				return true;
+			}
+		}
+
+		// Descend only after every link at this level has been tried, so the
+		// shallowest match wins and deeper directories go unread when it does.
+		foreach ( $descend as $dir ) {
+			if ( self::matches_symlinked_child( $files, $dir, $depth - 1 ) ) {
 				return true;
 			}
 		}
@@ -418,14 +468,16 @@ class FPAD_Fatal_Error_Handler {
 
 		// Individually symlinked plugins/themes (a dev-setup staple) resolve to a
 		// path outside wp-content entirely, so the root checks above miss them.
-		// Resolve each direct child of the roots before giving up.
-		if ( defined( 'WPMU_PLUGIN_DIR' ) && self::matches_symlinked_child( $files, WPMU_PLUGIN_DIR ) ) {
+		// Resolve the roots' children before giving up — two levels deep, which
+		// also covers a symlink inside a plugin or theme folder (a shared vendor/
+		// directory, say). Mirrored in FPAD_Admin::source_key().
+		if ( defined( 'WPMU_PLUGIN_DIR' ) && self::matches_symlinked_child( $files, WPMU_PLUGIN_DIR, 2 ) ) {
 			return 'mu-plugin';
 		}
-		if ( defined( 'WP_PLUGIN_DIR' ) && self::matches_symlinked_child( $files, WP_PLUGIN_DIR ) ) {
+		if ( defined( 'WP_PLUGIN_DIR' ) && self::matches_symlinked_child( $files, WP_PLUGIN_DIR, 2 ) ) {
 			return 'plugin';
 		}
-		if ( '' !== $theme_root && self::matches_symlinked_child( $files, $theme_root ) ) {
+		if ( '' !== $theme_root && self::matches_symlinked_child( $files, $theme_root, 2 ) ) {
 			return 'theme';
 		}
 

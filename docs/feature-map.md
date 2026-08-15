@@ -154,7 +154,7 @@ Everything is in `FPAD_Fatal_Error_Handler::display_custom_error_page()`: one se
 
 ### Change which plugin gets blamed (attribution)
 
-`FPAD_Fatal_Error_Handler::match_active_plugin()` is the whole algorithm (normalized path prefix match; single-file plugins matched exactly; symlink-aware via `path_variants()`/`path_is_inside()`). If you change *source semantics* (what counts as plugin/theme/core), update both `detect_error_source()` and its admin mirror `FPAD_Admin::source_key()`.
+`FPAD_Fatal_Error_Handler::match_active_plugin()` is the whole algorithm (normalized path prefix match; single-file plugins matched exactly; symlink-aware via `path_variants()`/`path_is_inside()`, plus a `matches_symlinked_child()` fallback pass for symlinks *inside* a plugin folder). If you change *source semantics* (what counts as plugin/theme/core), update both `detect_error_source()` and its admin mirror `FPAD_Admin::source_key()`.
 
 ### Add a state-changing admin action
 
