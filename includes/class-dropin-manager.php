@@ -32,7 +32,7 @@ class FPAD_Dropin_Manager {
 	 *
 	 * @var string
 	 */
-	const DROPIN_VERSION_TOKEN = 'fpad-dropin-version: 2';
+	const DROPIN_VERSION_TOKEN = 'fpad-dropin-version: 3';
 
 	/**
 	 * The path to the drop-in file in the wp-content directory
@@ -334,6 +334,19 @@ if ( ! defined( \'FPAD_PLUGIN_DIR\' ) ) {
 // still work when the fatal is an out-of-memory error.
 $GLOBALS[\'fpad_reserved_memory\'] = str_repeat( \'x\', 256 * 1024 );
 
+// Own an output buffer whenever PHP will print errors to the page: it prints
+// the fatal itself before any shutdown handler runs, which would otherwise pin
+// the response to HTTP 200 and leave a raw stack trace above our page.
+$fpad_ini_display  = strtolower( (string) ini_get( \'display_errors\' ) );
+$fpad_shows_errors = ! in_array( $fpad_ini_display, array( \'\', \'0\', \'off\', \'false\', \'stderr\' ), true );
+if ( defined( \'WP_DEBUG\' ) && WP_DEBUG ) {
+	$fpad_shows_errors = ! defined( \'WP_DEBUG_DISPLAY\' ) || false !== WP_DEBUG_DISPLAY;
+}
+if ( $fpad_shows_errors ) {
+	ob_start();
+}
+unset( $fpad_ini_display, $fpad_shows_errors );
+
 // Include the fatal error handler class.
 if ( ! class_exists( \'FPAD_Fatal_Error_Handler\' ) ) {
 	require_once FPAD_PLUGIN_DIR . \'includes/class-fatal-error-handler.php\';
@@ -342,7 +355,7 @@ if ( ! class_exists( \'FPAD_Fatal_Error_Handler\' ) ) {
 // Avoid a conflict with the Query Monitor error handler.
 define( \'QM_DISABLE_ERROR_HANDLER\', true );
 
-// fpad-dropin-version: 2 — see includes/fatal-error-handler-dropin.php.
+// fpad-dropin-version: 3 — see includes/fatal-error-handler-dropin.php.
 
 // Return an instance of our custom error handler.
 return new FPAD_Fatal_Error_Handler();

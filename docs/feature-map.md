@@ -43,6 +43,8 @@ All in `includes/class-fatal-error-handler.php` unless noted. Everything here mu
 | Handler self-protection (never crash the crash handler) | `handle()` `try/catch (Throwable)`; `headers_sent()` guard in `display_custom_error_page()` | — | 1.2.0 |
 | Per-step isolation (one failing step can't cost the others) | `handle()` — separate Throwable guard around attribute / log / render / alert | — | 1.5.0 |
 | Earliest-boot survival (fatal in `advanced-cache.php`, `object-cache.php`, `db.php`, `sunrise.php`) | `match_active_plugin()` (`WP_PLUGIN_DIR` guard), `get_active_plugins()` (`get_option` guard), `wp_call()`, pure-PHP `esc()` / `esc_link()` | — | 1.5.0 |
+| Logging a drop-in crash (restore the options API so the entry can be written) | `repair_options_api()`, `options_api_works()`, `can_load_core_cache()` | `fpad_deactivation_log` (write) | 1.5.0 |
+| Custom page + HTTP 500 when `WP_DEBUG_DISPLAY` is on | Drop-in `ob_start()` (sync pair with the generator) + buffer clear in `display_custom_error_page()` | — | 1.5.0 |
 | Query Monitor conflict guard | `includes/fatal-error-handler-dropin.php` (`QM_DISABLE_ERROR_HANDLER`) | — | 1.0.1 |
 
 ### Drop-in lifecycle (install / verify / heal)

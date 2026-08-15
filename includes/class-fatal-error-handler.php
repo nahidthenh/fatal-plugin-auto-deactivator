@@ -40,6 +40,14 @@ class FPAD_Fatal_Error_Handler {
 				return;
 			}
 
+			// When the fatal is what broke the options API, put it back first:
+			// attribution, the log entry and the alerts all depend on it.
+			try {
+				$this->repair_options_api();
+			} catch ( Throwable $e ) {
+				// Nothing to repair with; the steps below degrade on their own.
+			}
+
 			// Each step below is isolated: they run WordPress code that executes
 			// third-party hooks (deactivate_plugins(), update_option()) in a
 			// half-broken request, so a throw in one must not cost us the others —
@@ -635,6 +643,135 @@ class FPAD_Fatal_Error_Handler {
 	}
 
 	/**
+	 * Put the options API back on its feet when the fatal is what broke it.
+	 *
+	 * `db.php` (wp-settings.php:136) and `object-cache.php` (:151) are both loaded
+	 * before the object cache is initialised, so a fatal inside either leaves
+	 * `wp_cache_get()` undefined — and with it every option read, the log entry
+	 * and the alert. Core would have fallen back to `$wpdb` / its own in-memory
+	 * cache had the drop-in not crashed; this performs exactly that fallback, so
+	 * a crashing drop-in is recorded like any other fatal instead of vanishing.
+	 *
+	 * Everything here is conditional on the repair being *needed* and *safe*: a
+	 * healthy request returns at the first check having done nothing.
+	 *
+	 * @return bool Whether options can be read once this returns.
+	 */
+	protected function repair_options_api() {
+		if ( $this->options_api_works() ) {
+			return true;
+		}
+
+		try {
+			// A crashed advanced-cache.php (wp-settings.php:97) aborts before core
+			// loaded the options API at all. Replay the same includes core makes at
+			// lines 112-117, each only when its own sentinel symbol is still absent
+			// so nothing can be redeclared.
+			$core_files = array(
+				'/class-wp-list-util.php' => 'WP_List_Util',
+				'/class-wp-token-map.php' => 'WP_Token_Map',
+				'/formatting.php'         => 'esc_html',
+				'/meta.php'               => 'add_metadata',
+				'/functions.php'          => 'get_option',
+			);
+
+			foreach ( $core_files as $file => $sentinel ) {
+				$loaded = ( 0 === strpos( $sentinel, 'WP_' ) )
+					? class_exists( $sentinel, false )
+					: function_exists( $sentinel );
+
+				if ( ! $loaded && is_readable( ABSPATH . WPINC . $file ) ) {
+					require_once ABSPATH . WPINC . $file;
+				}
+			}
+
+			// A crashed db.php means core never reached its default $wpdb.
+			if ( empty( $GLOBALS['wpdb'] )
+				&& defined( 'DB_USER' ) && defined( 'DB_PASSWORD' )
+				&& defined( 'DB_NAME' ) && defined( 'DB_HOST' )
+				&& file_exists( ABSPATH . WPINC . '/class-wpdb.php' ) ) {
+				require_once ABSPATH . WPINC . '/class-wpdb.php';
+				$GLOBALS['wpdb'] = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+
+				// Without this the options table name has no prefix.
+				if ( function_exists( 'wp_set_wpdb_vars' ) ) {
+					wp_set_wpdb_vars();
+				}
+			}
+
+			// A crashed object-cache.php means core never loaded wp-includes/cache.php.
+			if ( ! function_exists( 'wp_cache_get' ) && $this->can_load_core_cache() ) {
+				require_once ABSPATH . WPINC . '/cache.php';
+			}
+
+			if ( function_exists( 'wp_cache_init' ) && empty( $GLOBALS['wp_object_cache'] ) ) {
+				wp_cache_init();
+			}
+		} catch ( Throwable $e ) {
+			return false;
+		}
+
+		return $this->options_api_works();
+	}
+
+	/**
+	 * Whether an option can actually be read right now.
+	 *
+	 * Deliberately performs a real read: `function_exists( 'get_option' )` is true
+	 * in exactly the situation this guards against, because `get_option()` is
+	 * loaded long before the object cache it depends on.
+	 *
+	 * @return bool
+	 */
+	protected function options_api_works() {
+		if ( ! function_exists( 'get_option' ) ) {
+			return false;
+		}
+
+		try {
+			get_option( 'siteurl' );
+
+			return true;
+		} catch ( Throwable $e ) {
+			return false;
+		}
+	}
+
+	/**
+	 * Whether wp-includes/cache.php can be included without colliding.
+	 *
+	 * A drop-in that declared some of the cache API before dying would make the
+	 * include a "Cannot redeclare" fatal — which, unlike a thrown Error, cannot
+	 * be caught and would take the error page down with it. The check reads the
+	 * symbols out of the installed cache.php rather than hard-coding a list, so
+	 * it stays exact across WordPress versions.
+	 *
+	 * @return bool
+	 */
+	protected function can_load_core_cache() {
+		$path = ABSPATH . WPINC . '/cache.php';
+
+		if ( ! is_readable( $path ) || class_exists( 'WP_Object_Cache', false ) ) {
+			return false;
+		}
+
+		$source = file_get_contents( $path );
+		if ( ! is_string( $source ) ) {
+			return false;
+		}
+
+		if ( preg_match_all( '/^\s*function\s+(\w+)\s*\(/m', $source, $matches ) ) {
+			foreach ( $matches[1] as $declared ) {
+				if ( function_exists( $declared ) ) {
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	/**
 	 * Call a WordPress function, but only when it both exists and actually works.
 	 *
 	 * `function_exists()` alone is not a sufficient guard in this class. A fatal
@@ -1178,15 +1315,26 @@ class FPAD_Fatal_Error_Handler {
 	 * @return bool Whether the page was rendered (false when headers were already sent)
 	 */
 	protected function display_custom_error_page( $error, $plugin_result ) {
-		// If output already started (common in shutdown), don't append a broken page
-		// mid-stream or trigger "headers already sent" warnings — leave the partial
-		// response as-is, mirroring WordPress core's own fatal handler guard.
-		if ( headers_sent() ) {
-			return false;
+		// With WP_DEBUG_DISPLAY on, PHP prints the fatal — file paths, stack trace —
+		// itself, and it does so BEFORE shutdown handlers run. Discard that output
+		// while it is still buffered (it usually is), along with any half-rendered
+		// page, so the visitor gets this page rather than a raw trace and so the
+		// 500 below can still be sent. Without this the response was a bare stack
+		// trace under a misleading HTTP 200.
+		while ( ob_get_level() > 0 ) {
+			//phpcs:ignore Generic.PHP.NoSilencedErrors.Discouraged, WordPress.PHP.NoSilencedErrors.Discouraged
+			if ( ! @ob_end_clean() ) {
+				break; // A non-removable buffer; stop rather than loop.
+			}
 		}
 
-		// Set the HTTP status code
-		http_response_code( 500 );
+		// Headers already sent means that output escaped to the client before we
+		// could clear it, so the status code is lost. Print the page anyway —
+		// WordPress core's own handler does the same, and a branded box after the
+		// noise beats leaving the visitor with only the noise.
+		if ( ! headers_sent() ) {
+			http_response_code( 500 );
+		}
 
 		// Get error type as string
 		$error_type = 'Unknown Error';
