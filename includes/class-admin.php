@@ -582,14 +582,16 @@ class FPAD_Admin {
 		}
 
 		// A plugin/theme symlinked in individually resolves outside wp-content, so
-		// the root prefix tests above cannot see it.
-		if ( defined( 'WPMU_PLUGIN_DIR' ) && FPAD_Fatal_Error_Handler::matches_symlinked_child( $files, WPMU_PLUGIN_DIR ) ) {
+		// the root prefix tests above cannot see it. Two levels deep, matching
+		// FPAD_Fatal_Error_Handler::detect_error_source(), so a symlink inside a
+		// plugin or theme folder is classified too.
+		if ( defined( 'WPMU_PLUGIN_DIR' ) && FPAD_Fatal_Error_Handler::matches_symlinked_child( $files, WPMU_PLUGIN_DIR, 2 ) ) {
 			return 'mu-plugin';
 		}
-		if ( defined( 'WP_PLUGIN_DIR' ) && FPAD_Fatal_Error_Handler::matches_symlinked_child( $files, WP_PLUGIN_DIR ) ) {
+		if ( defined( 'WP_PLUGIN_DIR' ) && FPAD_Fatal_Error_Handler::matches_symlinked_child( $files, WP_PLUGIN_DIR, 2 ) ) {
 			return 'plugin';
 		}
-		if ( '' !== $theme_root && FPAD_Fatal_Error_Handler::matches_symlinked_child( $files, $theme_root ) ) {
+		if ( '' !== $theme_root && FPAD_Fatal_Error_Handler::matches_symlinked_child( $files, $theme_root, 2 ) ) {
 			return 'theme';
 		}
 
