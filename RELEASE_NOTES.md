@@ -1,8 +1,8 @@
 # Fatal Plugin Auto Deactivator 1.5.1 — Release Notes
 
-Released 2026-08-15 · Requires WordPress 5.3+ / PHP 7.0+ · [Full changelog](readme.txt)
+Released 2026-08-18 · Requires WordPress 5.3+ / PHP 7.0+ · [Full changelog](readme.txt)
 
-A patch release with one real fix: fatal errors coming from a **symlinked plugin folder** are now attributed to the right plugin and auto-deactivated, instead of being logged as "could not be attributed" while the crashing plugin kept taking the site down.
+A patch release about one thing: **symlinks**. Fatal errors coming from a symlinked plugin — the folder itself, a single-file plugin, or a shared directory linked in from inside one — are now attributed to the right plugin and auto-deactivated, instead of being logged as "could not be attributed" while the crashing plugin kept taking the site down.
 
 ## 🐛 Fixed: symlinked plugins were never attributed
 
@@ -24,10 +24,19 @@ Sibling-name safety is unchanged — `akismet` still cannot claim a fatal from `
 ## 🐛 Fixed: "Unknown" source in the log viewer
 
 Log entries for symlinked plugins, must-use plugins, and themes were labelled **Unknown** in the Source column and in CSV/JSON exports. They are now classified correctly, for existing log entries too — the fix is in the classifier, not in what gets stored.
-- **Drop-in crashes are logged now, not swallowed.** A fatal inside `advanced-cache.php`, `object-cache.php`, `db.php` or `sunrise.php` happens before WordPress has finished loading its own options API — so there was no way to write the log entry, and the incident disappeared entirely. The handler now restores just enough of WordPress (core's own `$wpdb` and object-cache fallbacks, the ones core would have used had the drop-in not crashed) to record it. All four drop-in types verified end to end.
-- **`WP_DEBUG_DISPLAY` no longer suppresses the error page.** With it enabled, PHP prints its own raw error — server paths, full stack trace — *before* any shutdown handler runs. That hid the custom page entirely and, worse, left the response as **HTTP 200**: browsers, caches, and uptime monitors all saw a crashed page as a healthy one. The drop-in now takes an output buffer when errors are set to display, so the raw trace is replaced by the branded page and the 500 is sent correctly. Nothing changes when errors are not displayed, which is the usual production setting.
-- **Very early fatals are no longer silent:** WordPress registers its fatal error handler before it loads its own options and escaping APIs and before `WP_PLUGIN_DIR` exists, so a crash in a caching (`advanced-cache.php`), object-cache, database (`db.php`) or multisite (`sunrise.php`) drop-in used to leave the handler unable to run — a plain blank page, with nothing logged and nothing sent. Worse, a broken `object-cache.php` aborts WordPress *before* `wp_cache_get()` exists, so `esc_html()` and friends are present but throw the moment they look up an option — a `function_exists()` check cannot see that. The handler now degrades gracefully in that whole window and still renders the branded 500 page (the fatal is reported as unattributed, since no plugin has loaded that early). Each step of the handler is also isolated, so a third-party hook throwing during deactivation or an option write can no longer cost the visitor the page. *Caveat:* when the options API itself is what broke, no log entry or alert is possible — the page is the deliverable.
-- **The foreign-drop-in back-off now actually holds.** The watchdog reclaims a drop-in another plugin overwrote at most once per 24 h, but `wp-admin` was reinstalling it on *every* page load, so on any site an administrator uses, two plugins could quietly fight over the slot forever and the conflict was never surfaced. Both paths now share one back-off; when it holds you get the status banner and its one-click **Reinstall protection** action instead (that button is an explicit choice, so it always works).
+
+## 🐛 Fixed: symlinks *inside* a plugin folder
+
+A plugin folder that is itself real can still contain a symlink — a shared `vendor/` directory across a monorepo, the Bedrock/Composer staple. A fatal in there resolves to a path outside the plugin's folder, so no spelling of that folder could ever contain it:
+
+```
+error file : /srv/shared/vendor/acme/http/Client.php      ← what PHP reports
+plugin dir : /srv/site-a/wp-content/plugins/acme-seo/     ← what we compared against
+```
+
+The fatal was unattributed and `acme-seo` stayed active. Attribution now falls back to resolving each active plugin's own children — but only after the plain prefix pass has failed *and* the error file resolved outside `WP_PLUGIN_DIR`, so a normal fatal pays nothing. Worst case measured at ~2.7 ms on a 32-plugin site, in an already-crashed request.
+
+Symlinked **single-file** plugins (`plugins/hello.php` pointing elsewhere) were attributed correctly but classified as source "Unknown"; the child scan now matches a link that is a file, not only one that is a directory. Symlinked directories are compared, never followed, so a link loop cannot trap the scan.
 
 ## Upgrade notes
 
@@ -39,6 +48,6 @@ Three new public static helpers on `FPAD_Fatal_Error_Handler`, safe to call in t
 
 - `path_variants( $path )` — the normalized path plus its `realpath()` counterpart when the two differ.
 - `path_is_inside( $files, $dir )` — whether any variant of a file sits under `$dir`, either spelling.
-- `matches_symlinked_child( $files, $root )` — whether a file lives inside a symlinked direct child of `$root`.
+- `matches_symlinked_child( $files, $root, $depth = 1 )` — whether a file **is**, or lives inside, a symlinked child of `$root`. `$depth > 1` descends into real subdirectories only.
 
 No hooks, options, or behavior outside attribution changed.

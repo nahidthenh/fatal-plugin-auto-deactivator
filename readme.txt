@@ -154,9 +154,11 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 
 == Changelog ==
 
-= 1.5.1 - 03/08/2026 =
+= 1.5.1 - 18/08/2026 =
 - Fixed: Fatal errors in plugins whose folder is a symbolic link are now attributed and auto-deactivated correctly — PHP reports the resolved path for such files, so they previously showed as "could not be attributed" and the crashing plugin stayed active
 - Fixed: The log viewer's Source column (and the CSV/JSON export) now labels symlinked plugins, must-use plugins, and themes as such instead of "Unknown"
+- Fixed: A plugin whose folder contains a symbolic link — a shared vendor/ directory across a monorepo or Bedrock install, for example — is now attributed and auto-deactivated when the fatal comes from inside that link; previously the file resolved outside the plugin's folder, so nothing matched and the plugin stayed active
+- Fixed: Single-file plugins that are symlinked in (plugins/hello.php pointing elsewhere) are no longer labelled "Unknown" in the log viewer's Source column and exports
 
 = 1.5.0 - 15/08/2026 =
 - Added: Instant alerts — get an email and/or webhook (generic JSON or Slack-compatible) the moment a fatal error is detected, saying which plugin was involved and what action was taken; identical repeats are rate-limited by a configurable cooldown, and alerts that fire too early for WordPress to deliver are queued and sent on the next page load
@@ -225,6 +227,9 @@ Error logs are stored in your WordPress database as options. The plugin maintain
 - Initial release
 
 == Upgrade Notice ==
+
+= 1.5.1 =
+Symlink fixes: fatals from a symlinked plugin folder, a symlinked single-file plugin, or a shared directory linked in from inside a plugin are now attributed and auto-deactivated instead of logged as unattributed. No settings or stored data change.
 
 = 1.5.0 =
 Instant email/webhook (Slack-compatible) alerts when a fatal is detected, an hourly protection watchdog that self-heals and warns you when protection lapses, and out-of-memory resilience. Alerts are opt-in — nothing changes until you enable a channel.
