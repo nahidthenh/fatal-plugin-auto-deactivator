@@ -243,6 +243,13 @@
 	@apply fpad:w-full fpad:sm:w-72;
 }
 
+/* Source labels are short words ("core", "theme"), so the box collapses to a
+   sliver next to the Outcome select. Floor the width so the toolbar reads as a
+   row of equal controls. */
+#fpad-app .fpad-select {
+	@apply fpad:min-w-44;
+}
+
 /* -------------------------------------------------------------- Buttons */
 
 #fpad-app .fpad-btn {
