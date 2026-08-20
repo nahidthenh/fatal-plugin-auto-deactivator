@@ -20,7 +20,8 @@ Files:
 
 ```
 assets/
-  src/admin.css      ← Tailwind source (edit this)
+  src/admin.css      ← build entry: imports, @source, design tokens
+  src/components.css ← the .fpad-* component rules (edit this for components)
   css/admin.css      ← built output, COMMITTED and shipped (never edit by hand)
   css/notice.css     ← hand-written notice styles (edit this directly)
   js/admin.js        ← vanilla JS behaviours, no build step
@@ -56,9 +57,12 @@ Configured entirely in CSS (Tailwind v4, no `tailwind.config.js`):
 | Decision | Why |
 |----------|-----|
 | **Prefix `fpad:`** — utilities are written `fpad:flex`, `fpad:sm:grid-cols-2` | wp-admin and every other plugin share the same page. An unprefixed `.hidden`/`.fixed`/`.container` would leak into core markup |
+| **No cascade layers** — imports carry no `layer()`, nothing is wrapped in `@layer` | **The one that bites.** wp-admin ships its CSS *unlayered*, and an unlayered rule beats a layered one no matter how specific the layered selector is. Inside `@layer components`, core's `a { color: #2271b1 }` beat `#fpad-app .fpad-tab.is-active { color: #fff }` and the active tab rendered blue-on-blue; the same silently applied to buttons and inputs. (Tailwind still emits one `@layer properties` block for `@property` fallbacks — that is fine, it holds no rules of ours) |
+| **Import order is the cascade** — `theme.css` → `components.css` → `utilities.css` | Without layers, equal-specificity ties fall back to source order. Components import *before* utilities so a utility class in the markup can still override a component |
 | **Preflight not imported** (`@import "tailwindcss/theme.css"` + `utilities.css` only, no `base`) | Preflight resets `h1`, `button`, `input`, `table`… — inside wp-admin that would wreck core screens the moment our stylesheet loaded |
 | **`source(none)` + explicit `@source`** | Deterministic scanning; no surprise output from `node_modules` or the built file itself |
 | **Components scoped under `#fpad-app`** | wp-admin styles form controls with element selectors (`input[type=text]`, specificity 0,0,1,1). An id-scoped component class (1,0,1,0) wins without `!important` |
+| **Scoped reset via `:where(#fpad-app)`** at the top of `components.css` | Preflight is absent, so the browser default `p { margin: 1em 0 }` leaked into every component that only set `margin-top`. `:where()` drops the id to zero specificity, so the reset beats the user-agent sheet by origin but still loses to every `.fpad-*` rule |
 | **Loaded on our screen only** (`FPAD_Admin::enqueue_assets()` gates on `SCREEN_ID`) | It is a full utility sheet; it has no business on other plugins' pages |
 
 ---
@@ -196,7 +200,8 @@ Strings come from `wp_localize_script( 'fpad-admin', 'fpadUi', … )` in `FPAD_A
 ## 8. Rules
 
 1. **Escape at the boundary.** Helpers escape their arguments; composed HTML echoed from `FPAD_Admin` carries a `phpcs:ignore` comment explaining why. Never interpolate an unescaped value into a helper argument that is later echoed raw.
-2. **Never `!important`.** If a wp-admin rule wins, scope the component under `#fpad-app` instead.
+2. **Never `!important`.** If a wp-admin rule wins, scope the component under `#fpad-app` instead — and never wrap our CSS in `@layer`, which hands the fight to core automatically.
+   Set margins explicitly on anything you style: with no preflight, an element you give only `fpad:mt-*` keeps the browser's default bottom margin unless the scoped reset covers its tag.
 3. **Full class names only** — Tailwind cannot see runtime-assembled strings.
 4. **Rebuild + commit the CSS** with any markup change that introduces a new utility.
 5. **No external assets.** No CDN, no web fonts, no remote images — WordPress.org forbids it and the error page cannot fetch anything anyway.
