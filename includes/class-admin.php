@@ -276,8 +276,11 @@ class FPAD_Admin {
 		}
 		echo '</nav>';
 
-		// Show any settings errors/messages
-		echo '<div class="fpad-notices">';
+		// Show any settings errors/messages. The .wp-header-end marker matters:
+		// without it core's common.js relocates every .notice to just after the
+		// first .wrap h1 — which here lives inside the masthead. With the marker
+		// inside this container, relocated notices stay where they belong.
+		echo '<div class="fpad-notices"><hr class="wp-header-end">';
 		settings_errors( 'fpad_messages' );
 		echo '</div>';
 
