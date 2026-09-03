@@ -102,7 +102,7 @@ Every class is prefixed `fpad-` (components) or `fpad:` (utilities). Components 
 
 | Class | Role |
 |-------|------|
-| `#fpad-app` | Page root; sets font, base size, max width. **Every admin screen must render inside it** — components are scoped to it |
+| `#fpad-app` | Page root; sets font and base size, and spans the full wp-admin content column (no max width — a fixed cap left a gutter on wide screens; prose blocks cap their own measure). **Every admin screen must render inside it** — components are scoped to it |
 | `.fpad-masthead`, `.fpad-brand`, `.fpad-brand-mark`, `.fpad-title`, `.fpad-subtitle` | Page header: shield mark, plugin name, version line, protection badge |
 | `.fpad-tabs`, `.fpad-tab`, `.fpad-tab.is-active`, `.fpad-tab-count` | Segmented tab bar (Log / Settings) with an entry counter |
 | `.fpad-notices` | Wrapper around `settings_errors()`; restyles core `.notice` markup to match the page |

@@ -26,8 +26,12 @@
 
 /* ---------------------------------------------------------------- Shell */
 
+/* No max-width: every other wp-admin screen fills the content column, and a
+   fixed cap left a wide empty gutter on the right on large monitors. Blocks
+   that need a readable measure (help text, panel descriptions, empty states)
+   cap themselves instead. */
 #fpad-app {
-	@apply fpad:font-sans fpad:text-[13px] fpad:leading-relaxed fpad:text-ink-800 fpad:max-w-[1180px] fpad:pb-16;
+	@apply fpad:font-sans fpad:text-[13px] fpad:leading-relaxed fpad:text-ink-800 fpad:pb-16;
 }
 
 #fpad-app *,
