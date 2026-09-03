@@ -29,7 +29,7 @@ The plugin is distributed through the [WordPress.org plugin directory](https://w
 - **Action:** [`10up/action-wordpress-plugin-deploy@stable`](https://github.com/10up/action-wordpress-plugin-deploy) — commits the tagged tree to WP.org SVN `tags/<tag>` and `trunk`.
 - **Secrets required:** `SVN_USERNAME`, `SVN_PASSWORD` (WP.org credentials, configured in the GitHub repo).
 - **File filtering:** `.distignore` controls what is excluded from the SVN deploy (dotfiles, CI config, composer files, `vendor`, `tests`, `.wordpress-org`, archives — and `docs/`, `CLAUDE.md`, `.claude`: developer docs never ship to users). `.gitattributes` `export-ignore` entries mirror this for `git archive`-based packaging. Keep both in sync when adding tooling files (drift between them was reconciled in 1.5.0 — `docs/`, `CLAUDE.md`, `.claude/`, `vendor/`, and `RELEASE_NOTES.md` are excluded in both).
-- **WP.org assets:** banners, icons, and screenshots live in `.wordpress-org/` and are deployed to the SVN `assets/` directory by the 10up actions.
+- **WP.org assets:** banners, icons, and screenshots live in `.wordpress-org/` and are deployed to the SVN `assets/` directory by the 10up actions. The banner and icon are *rendered*, not hand-drawn: sources and the exact headless-Chrome commands are in `.wordpress-org/src/` (`icon.svg`, `banner.html`, `README.md`). The icon is also a sync pair with `FPAD_Admin_UI::logo()`, which draws the same mark in the admin masthead.
 
 ### `assets.yml` — readme/assets-only update
 

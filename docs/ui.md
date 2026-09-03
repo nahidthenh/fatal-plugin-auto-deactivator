@@ -103,7 +103,7 @@ Every class is prefixed `fpad-` (components) or `fpad:` (utilities). Components 
 | Class | Role |
 |-------|------|
 | `#fpad-app` | Page root; sets font and base size, and spans the full wp-admin content column (no max width — a fixed cap left a gutter on wide screens; prose blocks cap their own measure). **Every admin screen must render inside it** — components are scoped to it |
-| `.fpad-masthead`, `.fpad-brand`, `.fpad-brand-mark`, `.fpad-title`, `.fpad-subtitle` | Page header: shield mark, plugin name, version line, protection badge |
+| `.fpad-masthead`, `.fpad-brand`, `.fpad-brand-mark`, `.fpad-title`, `.fpad-subtitle` | Page header: logo mark (the tile is painted by the SVG, so `.fpad-brand-mark` has no background of its own), plugin name, version line, protection badge |
 | `.fpad-tabs`, `.fpad-tab`, `.fpad-tab.is-active`, `.fpad-tab-count` | Segmented tab bar (Log / Settings) with an entry counter |
 | `.fpad-notices` | Wrapper around `settings_errors()`; restyles core `.notice` markup to match the page |
 
@@ -154,6 +154,7 @@ All helpers **escape their own arguments** and **return** a string, so callers `
 | Method | Signature | Notes |
 |--------|-----------|-------|
 | `icon()` | `icon( $name, $class = '' )` | Inline 24×24 stroke SVG from `icon_paths()`; inherits `currentColor`. Unknown key → empty string |
+| `logo()` | `logo( $size = 40 )` | The product mark: white shield + power symbol on the brand tile, self-contained SVG with prefixed gradient ids. **Sync pair with `.wordpress-org/src/icon.svg`**, the source the WP.org icons are rendered from |
 | `badge()` | `badge( $label, $variant = 'neutral', $icon = '' )` | Variants: `ok`, `warn`, `danger`, `info`, `neutral`, `source` |
 | `button()` | `button( array $args )` | `label`, `href` (→ `<a>`), `variant`, `size`, `icon`, `type`, `name`, `value`, `attrs` |
 | `chip()` | `chip( $icon, $label, $value )` | Metadata chip; `$label` becomes screen-reader text and the tooltip prefix |
