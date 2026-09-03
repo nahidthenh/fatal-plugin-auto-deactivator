@@ -104,6 +104,44 @@ class FPAD_Admin_UI {
 	}
 
 	/**
+	 * The plugin's logo mark: a white shield with a power symbol, on the brand tile.
+	 *
+	 * Inline SVG rather than an <img> so it costs no request and stays crisp at
+	 * any size. This is a sync pair with `.wordpress-org/src/icon.svg`, the source
+	 * the WordPress.org icon PNGs are rendered from: change one, change the other,
+	 * or the plugin page and the admin screen stop looking like the same product.
+	 * Gradient ids are prefixed because wp-admin pages carry other plugins' SVGs.
+	 *
+	 * @param int $size Rendered edge length in pixels.
+	 * @return string
+	 */
+	public static function logo( $size = 40 ) {
+		$size = (int) $size;
+
+		return '<svg class="fpad-logo" width="' . esc_attr( $size ) . '" height="' . esc_attr( $size ) . '" viewBox="0 0 256 256" role="img" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">'
+			. '<defs>'
+			. '<linearGradient id="fpad-logo-tile" x1="0" y1="0" x2="0.6" y2="1">'
+			. '<stop offset="0" stop-color="#3a94d4"/><stop offset="0.55" stop-color="#2271b1"/><stop offset="1" stop-color="#144a76"/>'
+			. '</linearGradient>'
+			. '<radialGradient id="fpad-logo-glow" cx="0.22" cy="0.14" r="0.85">'
+			. '<stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/><stop offset="0.55" stop-color="#ffffff" stop-opacity="0.05"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>'
+			. '</radialGradient>'
+			. '<linearGradient id="fpad-logo-shield" x1="0.2" y1="0" x2="0.8" y2="1">'
+			. '<stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e8f1f9"/>'
+			. '</linearGradient>'
+			. '</defs>'
+			. '<rect width="256" height="256" rx="56" fill="url(#fpad-logo-tile)"/>'
+			. '<rect width="256" height="256" rx="56" fill="url(#fpad-logo-glow)"/>'
+			. '<g transform="translate(20 12) scale(9)">'
+			. '<path d="M12 3l7 3v5.5c0 4.4-3 7.4-7 9.5-4-2.1-7-5.1-7-9.5V6z" fill="url(#fpad-logo-shield)"/>'
+			. '</g>'
+			. '<g transform="translate(72.8 54) scale(4.6)" fill="none" stroke="#1b5e94" stroke-width="2.1" stroke-linecap="round">'
+			. '<path d="M12 3.4v8.2"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>'
+			. '</g>'
+			. '</svg>';
+	}
+
+	/**
 	 * Icon tile that anchors a log entry card.
 	 *
 	 * Two signals in one square: the glyph says where the crash came from

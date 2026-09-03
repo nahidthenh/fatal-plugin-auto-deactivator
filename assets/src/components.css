@@ -52,12 +52,13 @@
 	@apply fpad:flex fpad:items-center fpad:gap-3;
 }
 
+/* Holds the logo, which paints its own tile — hence no background here. */
 .fpad-brand-mark {
-	@apply fpad:flex fpad:h-10 fpad:w-10 fpad:shrink-0 fpad:items-center fpad:justify-center fpad:rounded-lg fpad:bg-brand-500 fpad:text-white fpad:shadow-card;
+	@apply fpad:flex fpad:h-10 fpad:w-10 fpad:shrink-0 fpad:items-center fpad:justify-center fpad:overflow-hidden fpad:rounded-lg fpad:shadow-card;
 }
 
 .fpad-brand-mark svg {
-	@apply fpad:h-5 fpad:w-5;
+	@apply fpad:h-10 fpad:w-10;
 }
 
 #fpad-app .fpad-title {

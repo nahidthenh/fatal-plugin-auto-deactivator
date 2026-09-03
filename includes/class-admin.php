@@ -302,7 +302,9 @@ class FPAD_Admin {
 
 		echo '<div class="fpad-masthead">';
 		echo '<div class="fpad-brand">';
-		echo '<span class="fpad-brand-mark">' . FPAD_Admin_UI::icon( $active ? 'shield-check' : 'shield-alert' ) . '</span>'; //phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		// The logo, not a state glyph: protection state is carried by the badge on
+		// the right of this row and by the banner below it.
+		echo '<span class="fpad-brand-mark">' . FPAD_Admin_UI::logo() . '</span>'; //phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo '<div>';
 		echo '<h1 class="fpad-title">' . esc_html__( 'Fatal Plugin Auto Deactivator', 'fatal-plugin-auto-deactivator' ) . '</h1>';
 		echo '<p class="fpad-subtitle">' . sprintf(
@@ -718,7 +720,7 @@ class FPAD_Admin {
 			case 'plugin':
 				return array(
 					'title' => __( 'Fatal error in an unrecognized plugin', 'fatal-plugin-auto-deactivator' ),
-					'note'  => __( 'The file sits in the plugins directory but matched no active plugin — it may have been renamed, deleted or already switched off.', 'fatal-plugin-auto-deactivator' ),
+					'note'  => __( 'The file sits in the plugins directory but matched no active plugin. It may have been renamed, deleted or already switched off.', 'fatal-plugin-auto-deactivator' ),
 				);
 
 			default:
@@ -1244,7 +1246,7 @@ class FPAD_Admin {
 		echo FPAD_Admin_UI::setting_row( //phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			array(
 				'label'   => __( 'Webhook alerts', 'fatal-plugin-auto-deactivator' ),
-				'help'    => __( 'POST the incident to a URL — a Slack incoming webhook, or your own endpoint.', 'fatal-plugin-auto-deactivator' ),
+				'help'    => __( 'POST the incident to a URL, such as a Slack incoming webhook or your own endpoint.', 'fatal-plugin-auto-deactivator' ),
 				'control' => FPAD_Admin_UI::switch_control(
 					array(
 						'name'    => 'fpad_notify_webhook',
