@@ -54,8 +54,8 @@
 	color: #1d2327;
 }
 
-.fpad-notice-text {
-	margin-top: 2px !important;
+.fpad-notice .fpad-notice-text {
+	margin-top: 2px;
 	font-size: 13px;
 	color: #50575e;
 }
@@ -92,12 +92,12 @@
 	word-break: break-word;
 }
 
-.fpad-notice-actions {
+.fpad-notice .fpad-notice-actions {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 12px;
-	margin-top: 10px !important;
+	margin-top: 10px;
 	font-size: 13px;
 }
 

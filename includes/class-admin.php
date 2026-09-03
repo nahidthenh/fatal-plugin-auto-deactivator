@@ -624,7 +624,7 @@ class FPAD_Admin {
 
 			// tabindex: the block is a fixed-height scroll region (see .fpad-code),
 			// which has to stay reachable without a mouse.
-			echo '<div class="fpad-code" tabindex="0"><strong>' . esc_html( $error_type ) . '</strong>' . esc_html( $entry['error_msg'] ) . '</div>';
+			echo '<div class="fpad-code" tabindex="0" role="region" aria-label="' . esc_attr__( 'Error message', 'fatal-plugin-auto-deactivator' ) . '"><strong>' . esc_html( $error_type ) . '</strong>' . esc_html( $entry['error_msg'] ) . '</div>';
 			echo '<p class="fpad-path">' . esc_html( $entry['error_file'] ) . ':' . esc_html( $entry['error_line'] ) . '</p>';
 
 			// Context chips: what was being requested, on which stack, and how long

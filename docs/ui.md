@@ -126,7 +126,7 @@ Every class is prefixed `fpad-` (components) or `fpad:` (utilities). Components 
 | `.fpad-entry-mark` (+ `--ok` / `--warn` / `--danger` / `--info`) | Icon tile leading the card: glyph = error source, tint = outcome (same variants as the status badge) |
 | `.fpad-entry-body` | Payload column under the head, indented (`sm:pl-12`) so message, path and chips line up with the title rather than the tile |
 | `.fpad-entry-note` | Sans-serif explanation on an unattributed card (why nothing was deactivated, what to do) |
-| `.fpad-code` | Monospace error block with a red rule; capped at `max-h-44` and scrolls inside itself (markup carries `tabindex="0"` so it stays keyboard reachable) |
+| `.fpad-code` | Monospace error block with a red rule; capped at `max-h-44` and scrolls inside itself (markup carries `tabindex="0"` plus `role="region"` and an `aria-label`, so the scroll region stays keyboard reachable and has an accessible name) |
 | `.fpad-path` | `file:line`, monospace, breaks anywhere |
 | `.fpad-entry-meta` + `.fpad-chip` | Context chips: first seen, request URI, PHP, WP |
 
@@ -271,7 +271,7 @@ PY
 
 States worth checking by hand, because each has its own layout:
 
-- Log tab: empty log · filters matching nothing · a single incident · 100 incidents · a 60-line stack trace (clamp toggle) · an unattributed incident · a long request URI.
+- Log tab: empty log · filters matching nothing · a single incident · 100 incidents · a 60-line stack trace (scrolls inside the card) · an unattributed incident · a long request URI.
 - Settings tab: no active plugins · ~50 active plugins (checklist grid + filter) · notifications off (save bar shows the hint) · both channels on (two test buttons).
 - Protection card: `active` and each failure status (`missing`, `foreign`, `unwritable`, `no_filesystem`, `disabled`, `stranded`) — force one with `wp option patch`/by moving `wp-content/fatal-error-handler.php`.
 - Notices: on a screen other than ours, with a pending deactivation and with protection lost.

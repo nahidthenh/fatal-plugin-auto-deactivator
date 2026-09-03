@@ -1768,8 +1768,8 @@ class FPAD_Fatal_Error_Handler {
 			font-size: 14px;
 		}
 		.fpad-detail p { margin: 0; }
-		.fpad-detail-label {
-			margin-bottom: 6px !important;
+		.fpad-detail .fpad-detail-label {
+			margin-bottom: 6px;
 			font-size: 11px;
 			font-weight: 700;
 			text-transform: uppercase;
@@ -1783,8 +1783,8 @@ class FPAD_Fatal_Error_Handler {
 			white-space: pre-wrap;
 			word-break: break-word;
 		}
-		.fpad-location {
-			margin-top: 10px !important;
+		.fpad-detail .fpad-location {
+			margin-top: 10px;
 			font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 			font-size: 12px;
 			color: var(--fpad-muted);

@@ -41,7 +41,7 @@ The plugin is distributed through the [WordPress.org plugin directory](https://w
 
 - **Trigger:** manual (`workflow_dispatch`) from the GitHub Actions tab.
 - **Action:** `rudlinkon/action-wordpress-build-zip@master` — produces an installable plugin zip as a workflow artifact (7-day retention), honoring `.distignore`. Useful for pre-release smoke testing or distributing a build outside WP.org.
-- **Caveat:** the workflow passes `npm-run-build: true` (Node 14), but this repo has no `package.json` — there is nothing to build. If a dispatch fails on the npm step, that flag is why; it can be set to `false`.
+- **Note:** the workflow passes `npm-run-build: false` on purpose. `package.json` exists only for the Tailwind build of the admin stylesheet, and the built `assets/css/admin.css` is committed — there is nothing to build at release time. Do not switch the flag on: the action pins an old Node, and the Tailwind v4 CLI needs Node ≥ 20.
 
 ## Update-survival of the drop-in
 

@@ -25,7 +25,7 @@ wp-content/
         ├── src/admin.css                   ← Tailwind source (dev only, not shipped)
         ├── css/admin.css                   ← built admin stylesheet (committed + shipped)
         ├── css/notice.css                  ← hand-written admin-notice styles
-        └── js/admin.js                     ← admin behaviours (copy, clamp, confirm, filter)
+        └── js/admin.js                     ← admin behaviours (copy, confirm, filter, switch captions)
 ```
 
 ## Entry points and initialization

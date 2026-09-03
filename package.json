@@ -1,6 +1,5 @@
 {
   "name": "fatal-plugin-auto-deactivator",
-  "version": "1.5.1",
   "private": true,
   "description": "Build tooling for the Fatal Plugin Auto Deactivator admin UI (Tailwind CSS).",
   "scripts": {
