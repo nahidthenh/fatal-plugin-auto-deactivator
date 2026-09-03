@@ -362,8 +362,39 @@
 	@apply fpad:border-ink-300;
 }
 
+/* Payload column: indented to the headline, so the error block, path and chips
+   share one left edge with the title instead of one with the icon tile. */
+.fpad-entry-body {
+	@apply fpad:sm:pl-12;
+}
+
 .fpad-entry-head {
-	@apply fpad:flex fpad:flex-wrap fpad:items-start fpad:justify-between fpad:gap-3;
+	@apply fpad:flex fpad:flex-wrap fpad:items-start fpad:gap-3;
+}
+
+/* Icon tile: glyph = where the crash came from, tint = what we did about it. */
+.fpad-entry-mark {
+	@apply fpad:flex fpad:h-9 fpad:w-9 fpad:shrink-0 fpad:items-center fpad:justify-center fpad:rounded-md fpad:bg-ink-50 fpad:text-ink-500;
+}
+
+.fpad-entry-mark svg {
+	@apply fpad:h-[18px] fpad:w-[18px];
+}
+
+.fpad-entry-mark--ok {
+	@apply fpad:bg-ok-50 fpad:text-ok-600;
+}
+
+.fpad-entry-mark--warn {
+	@apply fpad:bg-warn-50 fpad:text-warn-600;
+}
+
+.fpad-entry-mark--danger {
+	@apply fpad:bg-danger-50 fpad:text-danger-600;
+}
+
+.fpad-entry-mark--info {
+	@apply fpad:bg-brand-50 fpad:text-brand-600;
 }
 
 .fpad-entry-ident {
@@ -378,12 +409,14 @@
 	@apply fpad:m-0 fpad:text-[14px] fpad:font-semibold fpad:text-ink-900;
 }
 
-.fpad-entry-title em {
-	@apply fpad:font-normal fpad:not-italic fpad:text-ink-500;
-}
-
 .fpad-entry-sub {
 	@apply fpad:m-0 fpad:mt-0.5 fpad:font-mono fpad:text-[11px] fpad:break-all fpad:text-ink-500;
+}
+
+/* Prose, not a file path: the unattributed card explains itself here, so it
+   keeps the sans stack the mono .fpad-entry-sub deliberately drops. */
+.fpad-entry-note {
+	@apply fpad:m-0 fpad:mt-0.5 fpad:max-w-2xl fpad:text-[12px] fpad:text-ink-500;
 }
 
 .fpad-entry-actions {

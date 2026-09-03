@@ -104,6 +104,26 @@ class FPAD_Admin_UI {
 	}
 
 	/**
+	 * Icon tile that anchors a log entry card.
+	 *
+	 * Two signals in one square: the glyph says where the crash came from
+	 * (plugin, theme, drop-in…), the tint says what the plugin did about it —
+	 * the same colour vocabulary the status badge beside it uses.
+	 *
+	 * @param string $icon    Icon key from icon_paths().
+	 * @param string $variant One of: ok, warn, danger, info, neutral.
+	 * @return string
+	 */
+	public static function entry_mark( $icon, $variant = 'neutral' ) {
+		$class = 'fpad-entry-mark';
+		if ( in_array( $variant, array( 'ok', 'warn', 'danger', 'info' ), true ) ) {
+			$class .= ' fpad-entry-mark--' . $variant;
+		}
+
+		return '<span class="' . esc_attr( $class ) . '" aria-hidden="true">' . self::icon( $icon ) . '</span>';
+	}
+
+	/**
 	 * Render a button or button-styled link.
 	 *
 	 * @param array $args {

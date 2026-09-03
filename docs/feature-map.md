@@ -81,7 +81,7 @@ The screen is **Tools → Fatal Plugin Log** (`tools.php?page=fpad-log`), regist
 | Markup vocabulary (icons, buttons, badges, chips, panels, rows, switches) | `FPAD_Admin_UI::*` — see [ui.md §5](ui.md#5-php-helper-api--fpad_admin_ui) | 1.6.0 |
 | One-click "Reinstall protection" | `handle_admin_actions()` (`fpad_action=reinstall`), `reinstall_url()` | 1.3.0 |
 | Log tab: summary cards | `render_log_summary()` | 1.2.0 |
-| Log tab: incident cards, badges, ×N counts, context chips | `render_entries()`, `status_badge()`/`status_meta()`, `get_error_type_string()`, `classify_source()`/`source_key()`/`source_label()`, `entry_status()` | 1.1.0–1.6.0 |
+| Log tab: incident cards, badges, ×N counts, context chips | `render_entries()`, `status_badge()`/`status_meta()`, `get_error_type_string()`, `source_key()`/`source_label()`/`source_icon()`/`unattributed_copy()`, `entry_status()` | 1.1.0–1.6.0 |
 | Filter by source/status + free-text search | `render_filter_bar()`, `filter_log()`, `status_labels()` (GET params `fpad_source`, `fpad_status`, `fpad_q`) | 1.4.0 |
 | Per-entry delete | `handle_admin_actions()` (`fpad_action=delete`), `entry_key()` | 1.4.0 |
 | Clear whole log | `handle_clear_log()` (POST, processed during `render_log_page()`) | 1.1.0 |

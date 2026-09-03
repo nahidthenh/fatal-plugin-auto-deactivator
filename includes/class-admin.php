@@ -540,12 +540,14 @@ class FPAD_Admin {
 		echo '<div class="fpad-entries">';
 
 		foreach ( $deactivation_log as $entry ) {
-			$error_type = self::get_error_type_string( $entry['error_type'] );
-			$status     = self::entry_status( $entry );
-			$source     = self::classify_source( isset( $entry['error_file'] ) ? $entry['error_file'] : '' );
-			$count      = isset( $entry['count'] ) ? (int) $entry['count'] : 1;
-			$time       = isset( $entry['time'] ) ? $entry['time'] : 0;
-			$entry_key  = self::entry_key( $entry );
+			$error_type  = self::get_error_type_string( $entry['error_type'] );
+			$status      = self::entry_status( $entry );
+			$status_meta = self::status_meta( $status );
+			$source_key  = self::source_key( isset( $entry['error_file'] ) ? $entry['error_file'] : '' );
+			$source      = self::source_label( $source_key );
+			$count       = isset( $entry['count'] ) ? (int) $entry['count'] : 1;
+			$time        = isset( $entry['time'] ) ? $entry['time'] : 0;
+			$entry_key   = self::entry_key( $entry );
 
 			$delete_url = wp_nonce_url(
 				admin_url( 'tools.php?page=fpad-log&fpad_action=delete&key=' . rawurlencode( $entry_key ) ),
@@ -555,6 +557,8 @@ class FPAD_Admin {
 			echo '<article class="fpad-entry">';
 
 			echo '<div class="fpad-entry-head">';
+
+			echo FPAD_Admin_UI::entry_mark( self::source_icon( $source_key ), $status_meta['variant'] ); //phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 
 			echo '<div class="fpad-entry-ident">';
 			echo '<div class="fpad-entry-badges">';
@@ -576,8 +580,11 @@ class FPAD_Admin {
 				echo '<h3 class="fpad-entry-title">' . esc_html( $entry['plugin_name'] ) . '</h3>';
 				echo '<p class="fpad-entry-sub">' . esc_html( $entry['plugin'] ) . '</p>';
 			} else {
-				echo '<h3 class="fpad-entry-title"><em>' . esc_html__( 'Not traced to a plugin', 'fatal-plugin-auto-deactivator' ) . '</em></h3>';
-				echo '<p class="fpad-entry-sub">' . esc_html__( 'Nothing was deactivated for this incident.', 'fatal-plugin-auto-deactivator' ) . '</p>';
+				// "Not traced to a plugin" only said what did not happen. Name the
+				// origin instead, and say what the admin can actually do about it.
+				$unattributed = self::unattributed_copy( $source_key );
+				echo '<h3 class="fpad-entry-title">' . esc_html( $unattributed['title'] ) . '</h3>';
+				echo '<p class="fpad-entry-note">' . esc_html( $unattributed['note'] ) . '</p>';
 			}
 			echo '</div>';
 
@@ -609,6 +616,10 @@ class FPAD_Admin {
 
 			echo '</div>';
 
+			// Payload column, indented to line up with the headline rather than
+			// with the icon tile beside it.
+			echo '<div class="fpad-entry-body">';
+
 			// tabindex: the block is a fixed-height scroll region (see .fpad-code),
 			// which has to stay reachable without a mouse.
 			echo '<div class="fpad-code" tabindex="0"><strong>' . esc_html( $error_type ) . '</strong>' . esc_html( $entry['error_msg'] ) . '</div>';
@@ -637,6 +648,8 @@ class FPAD_Admin {
 				echo '<div class="fpad-entry-meta">' . $chips . '</div>'; //phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			}
 
+			echo '</div>';
+
 			echo '</article>';
 		}
 
@@ -644,17 +657,76 @@ class FPAD_Admin {
 	}
 
 	/**
-	 * Classify the originating source of an error from its file path.
+	 * Icon key for an error source, used on the entry card's mark.
 	 *
-	 * Mirrors FPAD_Fatal_Error_Handler::detect_error_source(), but operates on
-	 * the path stored in the log so old and new entries are labelled the same
-	 * way in the viewer.
-	 *
-	 * @param string $file Absolute path to the file that triggered the error.
-	 * @return string Human-readable source label.
+	 * @param string $source_key One of the keys returned by source_key().
+	 * @return string Icon key understood by FPAD_Admin_UI::icon().
 	 */
-	private static function classify_source( $file ) {
-		return self::source_label( self::source_key( $file ) );
+	private static function source_icon( $source_key ) {
+		$map = array(
+			'plugin'    => 'plug',
+			'mu-plugin' => 'plug',
+			'theme'     => 'file',
+			'drop-in'   => 'cpu',
+			'core'      => 'globe',
+			'unknown'   => 'help',
+		);
+
+		return isset( $map[ $source_key ] ) ? $map[ $source_key ] : 'help';
+	}
+
+	/**
+	 * Headline and explanation for an incident that could not be pinned on a plugin.
+	 *
+	 * Only errors inside wp-content/plugins/<dir> belong to a plugin we can switch
+	 * off; everything else is logged with no attribution. Rather than repeat that
+	 * as a shrug, each source gets the reason nothing was deactivated and the one
+	 * move that recovers the site. Wording follows the visitor error page in
+	 * FPAD_Fatal_Error_Handler::display_custom_error_page() (a loose sync pair:
+	 * same explanations, different voice — that page speaks to a visitor, this one
+	 * to the administrator).
+	 *
+	 * @param string $source_key One of the keys returned by source_key().
+	 * @return array{title:string,note:string}
+	 */
+	private static function unattributed_copy( $source_key ) {
+		switch ( $source_key ) {
+			case 'theme':
+				return array(
+					'title' => __( 'Fatal error in the active theme', 'fatal-plugin-auto-deactivator' ),
+					'note'  => __( 'Themes are never deactivated automatically. Switch to a default theme to bring the site back.', 'fatal-plugin-auto-deactivator' ),
+				);
+
+			case 'mu-plugin':
+				return array(
+					'title' => __( 'Fatal error in a must-use plugin', 'fatal-plugin-auto-deactivator' ),
+					'note'  => __( 'Must-use plugins load before this one can step in and cannot be switched off. Fix or remove the file in wp-content/mu-plugins.', 'fatal-plugin-auto-deactivator' ),
+				);
+
+			case 'drop-in':
+				return array(
+					'title' => __( 'Fatal error in a drop-in', 'fatal-plugin-auto-deactivator' ),
+					'note'  => __( 'Drop-ins such as object-cache.php or advanced-cache.php load before plugins. Rename or delete the file in wp-content to recover.', 'fatal-plugin-auto-deactivator' ),
+				);
+
+			case 'core':
+				return array(
+					'title' => __( 'Fatal error in WordPress core', 'fatal-plugin-auto-deactivator' ),
+					'note'  => __( 'The crash came from WordPress itself, not from a plugin. Reinstall core files or check the PHP version and extensions on the server.', 'fatal-plugin-auto-deactivator' ),
+				);
+
+			case 'plugin':
+				return array(
+					'title' => __( 'Fatal error in an unrecognized plugin', 'fatal-plugin-auto-deactivator' ),
+					'note'  => __( 'The file sits in the plugins directory but matched no active plugin — it may have been renamed, deleted or already switched off.', 'fatal-plugin-auto-deactivator' ),
+				);
+
+			default:
+				return array(
+					'title' => __( 'Fatal error from an unidentified file', 'fatal-plugin-auto-deactivator' ),
+					'note'  => __( 'PHP reported no usable file path, so the crash could not be traced. The message below is everything it gave us.', 'fatal-plugin-auto-deactivator' ),
+				);
+		}
 	}
 
 	/**

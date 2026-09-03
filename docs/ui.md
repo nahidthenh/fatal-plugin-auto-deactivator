@@ -123,6 +123,9 @@ Every class is prefixed `fpad-` (components) or `fpad:` (utilities). Components 
 |-------|------|
 | `.fpad-entries` | Card tray: a tinted, padded column that spaces the incident cards |
 | `.fpad-entry` + `-head` / `-ident` / `-badges` / `-title` / `-sub` / `-actions` / `-when` | One incident card |
+| `.fpad-entry-mark` (+ `--ok` / `--warn` / `--danger` / `--info`) | Icon tile leading the card: glyph = error source, tint = outcome (same variants as the status badge) |
+| `.fpad-entry-body` | Payload column under the head, indented (`sm:pl-12`) so message, path and chips line up with the title rather than the tile |
+| `.fpad-entry-note` | Sans-serif explanation on an unattributed card (why nothing was deactivated, what to do) |
 | `.fpad-code` | Monospace error block with a red rule; capped at `max-h-44` and scrolls inside itself (markup carries `tabindex="0"` so it stays keyboard reachable) |
 | `.fpad-path` | `file:line`, monospace, breaks anywhere |
 | `.fpad-entry-meta` + `.fpad-chip` | Context chips: first seen, request URI, PHP, WP |
@@ -154,6 +157,7 @@ All helpers **escape their own arguments** and **return** a string, so callers `
 | `badge()` | `badge( $label, $variant = 'neutral', $icon = '' )` | Variants: `ok`, `warn`, `danger`, `info`, `neutral`, `source` |
 | `button()` | `button( array $args )` | `label`, `href` (→ `<a>`), `variant`, `size`, `icon`, `type`, `name`, `value`, `attrs` |
 | `chip()` | `chip( $icon, $label, $value )` | Metadata chip; `$label` becomes screen-reader text and the tooltip prefix |
+| `entry_mark()` | `entry_mark( $icon, $variant = 'neutral' )` | Icon tile for a log entry card; variants `ok`/`warn`/`danger`/`info`, `aria-hidden` (the badges beside it carry the meaning) |
 | `stat()` | `stat( array $args )` | `value`, `label`, `icon`, `variant` |
 | `empty_state()` | `empty_state( array $args )` | `title`, `text`, `icon`, `actions` (pre-rendered HTML) |
 | `panel_open()` / `panel_close()` | `panel_open( array $args )`, `panel_close( $footer = '' )` | `title`, `desc`, `icon`, `actions`, `flush`. **Always pair them** |
