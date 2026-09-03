@@ -87,7 +87,7 @@ The screen is **Tools → Fatal Plugin Log** (`tools.php?page=fpad-log`), regist
 | Clear whole log | `handle_clear_log()` (POST, processed during `render_log_page()`) | 1.1.0 |
 | CSV/JSON export | `export_log()` (`admin_post_fpad_export_log`), `csv_safe()` | 1.4.0 |
 | Copy-to-clipboard bug report | `build_report()` + `assets/js/admin.js` (`.fpad-copy` / `data-fpad-report`) | 1.4.0 |
-| Long-message clamp, confirm guards, live list filter | `assets/js/admin.js` (`data-fpad-clamp`, `data-fpad-confirm`, `data-fpad-filter`) | 1.6.0 |
+| Confirm guards, live list filter, switch captions | `assets/js/admin.js` (`data-fpad-confirm`, `data-fpad-filter`, `data-fpad-switch-text`) | 1.6.0 |
 | Settings tab: log-only mode + protected plugins | `render_settings_tab()`, `handle_settings_save()`, `get_settings()`, `get_active_plugin_choices()` | 1.3.0 |
 | Settings tab: Notifications section (channels, statuses, cooldown) + lazy drain-cron scheduling | `render_settings_tab()`, `handle_settings_save()` | 1.5.0 |
 | Test notification buttons | `handle_test_alert()` (`admin_post_fpad_test_alert`) → `FPAD_Notifier::send_test()`; feedback via `fpad_test` query args in `render_log_page()` | 1.5.0 |

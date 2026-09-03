@@ -121,9 +121,9 @@ Every class is prefixed `fpad-` (components) or `fpad:` (utilities). Components 
 
 | Class | Role |
 |-------|------|
-| `.fpad-entries` | Divided list wrapper |
+| `.fpad-entries` | Card tray: a tinted, padded column that spaces the incident cards |
 | `.fpad-entry` + `-head` / `-ident` / `-badges` / `-title` / `-sub` / `-actions` / `-when` | One incident card |
-| `.fpad-code` | Monospace error block with a red rule; carries `data-fpad-clamp` |
+| `.fpad-code` | Monospace error block with a red rule; capped at `max-h-44` and scrolls inside itself (markup carries `tabindex="0"` so it stays keyboard reachable) |
 | `.fpad-path` | `file:line`, monospace, breaks anywhere |
 | `.fpad-entry-meta` + `.fpad-chip` | Context chips: first seen, request URI, PHP, WP |
 
@@ -173,7 +173,6 @@ The available icon keys are the array keys of `FPAD_Admin_UI::icon_paths()`: `sh
 | Data attribute | Element | Behaviour |
 |----------------|---------|-----------|
 | `data-fpad-report="<text>"` + class `fpad-copy` | Button | Copies the plain-text bug report to the clipboard, swapping the label to "Copied" for 1.6 s |
-| `data-fpad-clamp` | `.fpad-code` block | If taller than ~132 px, collapses it and injects a "Show full message" toggle |
 | `data-fpad-confirm="<question>"` | Link, button **or form** | `window.confirm()` guard before the destructive action proceeds |
 | `data-fpad-filter="<selector>"` | Search input | Live-filters elements carrying `data-fpad-filterable` inside the target list |
 | `data-fpad-filterable="<haystack>"` | List item | Lowercased text the filter matches against |

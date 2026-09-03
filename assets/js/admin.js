@@ -80,42 +80,6 @@
 	}
 
 	/**
-	 * Collapse long error messages behind a "Show full message" toggle, so a
-	 * 60-line stack trace cannot bury the rest of the log.
-	 */
-	function clampMessages() {
-		var LIMIT = 132; // px — roughly seven lines of the mono block.
-
-		Array.prototype.forEach.call( app.querySelectorAll( '[data-fpad-clamp]' ), function ( block ) {
-			if ( block.scrollHeight <= LIMIT + 24 ) {
-				return;
-			}
-
-			var toggle = document.createElement( 'button' );
-
-			block.style.maxHeight = LIMIT + 'px';
-			block.style.overflow = 'hidden';
-
-			toggle.type = 'button';
-			toggle.className = 'fpad-btn fpad-btn--ghost fpad-btn--sm fpad:mt-1';
-			toggle.innerHTML = '<span>' + text( 'showMore', 'Show full message' ) + '</span>';
-			toggle.setAttribute( 'aria-expanded', 'false' );
-
-			toggle.addEventListener( 'click', function () {
-				var expanded = toggle.getAttribute( 'aria-expanded' ) === 'true';
-
-				block.style.maxHeight = expanded ? LIMIT + 'px' : 'none';
-				toggle.setAttribute( 'aria-expanded', expanded ? 'false' : 'true' );
-				toggle.firstChild.textContent = expanded
-					? text( 'showMore', 'Show full message' )
-					: text( 'showLess', 'Show less' );
-			} );
-
-			block.parentNode.insertBefore( toggle, block.nextSibling );
-		} );
-	}
-
-	/**
 	 * Live-filter a checklist (used by the protected-plugins list).
 	 */
 	function bindListFilters() {
@@ -188,7 +152,6 @@
 		}
 	} );
 
-	clampMessages();
 	bindListFilters();
 	bindSwitchLabels();
 } )();

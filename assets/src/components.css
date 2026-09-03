@@ -348,16 +348,18 @@
 
 /* --------------------------------------------------------- Log entries */
 
+/* Cards on a tinted tray, not rows in a divided list: at full width a hairline
+   rule was too weak to separate incidents that are themselves multi-line. */
 .fpad-entries {
-	@apply fpad:divide-y fpad:divide-ink-100;
+	@apply fpad:flex fpad:flex-col fpad:gap-3 fpad:bg-ink-25 fpad:p-4;
 }
 
 .fpad-entry {
-	@apply fpad:px-5 fpad:py-4;
+	@apply fpad:rounded-lg fpad:border fpad:border-ink-100 fpad:bg-white fpad:px-4 fpad:py-4 fpad:shadow-card fpad:transition-colors;
 }
 
 .fpad-entry:hover {
-	@apply fpad:bg-ink-25/60;
+	@apply fpad:border-ink-300;
 }
 
 .fpad-entry-head {
@@ -397,9 +399,18 @@
 }
 
 /* Square-edged on purpose: the block runs full width against the card padding,
-   and rounded corners on a code block read as a floating chip. */
+   and rounded corners on a code block read as a floating chip.
+
+   Capped and scrollable rather than clamped: a 60-line stack trace must not
+   bury the next incident, and its own scrollbar beats a "show more" toggle.
+   The markup carries tabindex="0" so the scroll region is keyboard reachable;
+   overscroll-contain keeps the page still once the block hits its end. */
 .fpad-code {
-	@apply fpad:mt-3 fpad:overflow-x-auto fpad:border-l-[3px] fpad:border-danger-500 fpad:bg-ink-25 fpad:px-3 fpad:py-2.5 fpad:font-mono fpad:text-[12px] fpad:leading-[1.6] fpad:whitespace-pre-wrap fpad:break-words fpad:text-ink-800;
+	@apply fpad:mt-3 fpad:max-h-44 fpad:overflow-auto fpad:overscroll-contain fpad:border-l-[3px] fpad:border-danger-500 fpad:bg-ink-25 fpad:px-3 fpad:py-2.5 fpad:font-mono fpad:text-[12px] fpad:leading-[1.6] fpad:whitespace-pre-wrap fpad:break-words fpad:text-ink-800;
+}
+
+.fpad-code:focus-visible {
+	@apply fpad:outline-2 fpad:outline-offset-2 fpad:outline-brand-500;
 }
 
 .fpad-code strong {

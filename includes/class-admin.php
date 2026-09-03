@@ -58,8 +58,6 @@ class FPAD_Admin {
 				array(
 					'copied'      => __( 'Copied', 'fatal-plugin-auto-deactivator' ),
 					'copyFailed'  => __( 'Press Ctrl/Cmd+C to copy', 'fatal-plugin-auto-deactivator' ),
-					'showMore'    => __( 'Show full message', 'fatal-plugin-auto-deactivator' ),
-					'showLess'    => __( 'Show less', 'fatal-plugin-auto-deactivator' ),
 					'confirmText' => __( 'Delete this log entry? This cannot be undone.', 'fatal-plugin-auto-deactivator' ),
 				)
 			);
@@ -611,7 +609,9 @@ class FPAD_Admin {
 
 			echo '</div>';
 
-			echo '<div class="fpad-code" data-fpad-clamp><strong>' . esc_html( $error_type ) . '</strong>' . esc_html( $entry['error_msg'] ) . '</div>';
+			// tabindex: the block is a fixed-height scroll region (see .fpad-code),
+			// which has to stay reachable without a mouse.
+			echo '<div class="fpad-code" tabindex="0"><strong>' . esc_html( $error_type ) . '</strong>' . esc_html( $entry['error_msg'] ) . '</div>';
 			echo '<p class="fpad-path">' . esc_html( $entry['error_file'] ) . ':' . esc_html( $entry['error_line'] ) . '</p>';
 
 			// Context chips: what was being requested, on which stack, and how long
